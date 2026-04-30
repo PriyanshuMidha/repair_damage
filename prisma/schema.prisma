@@ -1,0 +1,126 @@
+// Production persistence blueprint for Repair App V1.
+// The running demo uses lib/store.ts in memory; map these models to your real DB when wiring persistence.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Party {
+  id      String   @id @default(cuid())
+  name    String
+  phone   String
+  type    String
+  repairs Repair[]
+}
+
+model Product {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  color        String
+  saleRate     Decimal
+  purchaseRate Decimal
+  repairs      Repair[]
+}
+
+model User {
+  id       String @id @default(cuid())
+  name     String
+  role     String
+  repairs  Repair[]
+}
+
+model Repair {
+  id                    String                @id @default(cuid())
+  repairNumber          String                @unique
+  partyId               String
+  productId             String
+  quantity              Int                   @default(1)
+  isBilled              Boolean               @default(false)
+  billOrGrReference     String?
+  damageCategory        String
+  damageRemarks         String
+  productCondition      String
+  currentStatus         String
+  receivedByUserId      String
+  receiverStaffName     String
+  createdAt             DateTime              @default(now())
+  updatedAt             DateTime              @updatedAt
+  receivedAt            DateTime
+  sentToRepairAt        DateTime?
+  receivedAfterRepairAt DateTime?
+  readyToReturnAt       DateTime?
+  reworkRequiredAt      DateTime?
+  repairFailedAt        DateTime?
+  returnedAt            DateTime?
+  cancelledAt           DateTime?
+  repairCenter          String?
+  sentToRepairByStaffName String?
+  receivedAfterRepairByStaffName String?
+  checkedByStaffName    String?
+  returnedByStaffName   String?
+  returnReceivedBy      String?
+  deliveryMode          String?
+  courierName           String?
+  trackingNumber        String?
+  transportName         String?
+  returnRemarks         String?
+  cancellationReason    String?
+  correctionReason      String?
+  party                 Party                 @relation(fields: [partyId], references: [id])
+  product               Product               @relation(fields: [productId], references: [id])
+  receivedBy            User                  @relation(fields: [receivedByUserId], references: [id])
+  photos                RepairPhoto[]
+  history               RepairStatusHistory[]
+  receipts              RepairReceipt[]
+
+  @@index([currentStatus])
+  @@index([partyId])
+  @@index([productId])
+  @@index([receivedAt])
+  @@index([receivedByUserId])
+}
+
+model RepairPhoto {
+  id               String   @id @default(cuid())
+  repairId         String
+  fileName         String
+  url              String
+  uploadedByUserId String
+  uploadedAt       DateTime @default(now())
+  repair           Repair   @relation(fields: [repairId], references: [id])
+}
+
+model RepairStatusHistory {
+  id         String   @id @default(cuid())
+  repairId   String
+  action     String
+  fromStatus String?
+  toStatus   String
+  userId     String
+  userName   String
+  remarks    String?
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  repair     Repair   @relation(fields: [repairId], references: [id])
+
+  @@index([repairId])
+  @@index([toStatus])
+  @@index([createdAt])
+}
+
+model RepairReceipt {
+  id                String   @id @default(cuid())
+  repairId          String
+  htmlPath          String
+  pdfPath           String
+  generatedAt       DateTime @default(now())
+  generatedByUserId String
+  lastError         String?
+  repair            Repair   @relation(fields: [repairId], references: [id])
+}
