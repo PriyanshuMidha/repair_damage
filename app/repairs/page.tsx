@@ -2,22 +2,35 @@
 
 import Link from "next/link";
 import { useEffect, useState, useTransition } from "react";
+import { RepairBackButton } from "@/components/RepairBackButton";
+import { RepairHeroNav } from "@/components/RepairHeroNav";
 import { StatusBadge } from "@/components/StatusBadge";
-import { REPAIR_STATUSES, type RepairDetail } from "@/lib/types";
+import { relevantPersonLabel } from "@/lib/workflow";
+import { type RepairDetail } from "@/lib/types";
 
-type ResponseShape = { repairs: RepairDetail[] };
+type ResponseShape = { repairs?: RepairDetail[]; error?: string };
 
 export default function RepairsPage() {
   const [repairs, setRepairs] = useState<RepairDetail[]>([]);
-  const [filters, setFilters] = useState({ status: "", party: "", productCode: "", staff: "", repairNumber: "", from: "", to: "" });
+  const [error, setError] = useState("");
+  const [filters, setFilters] = useState({
+    party: "",
+    person: "",
+  });
   const [isPending, startTransition] = useTransition();
 
-  function load() {
-    const search = new URLSearchParams(Object.entries(filters).filter(([, value]) => value));
+  function load(nextFilters = filters) {
+    const search = new URLSearchParams(Object.entries(nextFilters).filter(([, value]) => value));
     startTransition(async () => {
+      setError("");
       const response = await fetch(`/api/repairs?${search.toString()}`, { cache: "no-store" });
       const data = (await response.json()) as ResponseShape;
-      setRepairs(data.repairs);
+      if (!response.ok) {
+        setRepairs([]);
+        setError(data.error ?? "Could not load repairs.");
+        return;
+      }
+      setRepairs(data.repairs ?? []);
     });
   }
 
@@ -27,91 +40,129 @@ export default function RepairsPage() {
 
   const exportUrl = `/api/repairs/export?${new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString()}`;
 
+  function reset() {
+    const clean = { party: "", person: "" };
+    setFilters(clean);
+    load(clean);
+  }
+
   return (
     <main className="shell">
+      <div className="mobile-only mobile-back-sticky">
+        <RepairBackButton />
+      </div>
       <section className="hero">
         <div>
           <div className="eyebrow">Repair Control Room</div>
-          <h1>Damaged goods, tracked cleanly.</h1>
-          <p>Receive, dispatch, inspect, return, and audit every repair without letting edge cases slip into the fog.</p>
+          <h1>Repairs in one clear flow.</h1>
+          <p className="hero-lede">Track intake, repair movement, return, and receipt details without losing who handled each step.</p>
         </div>
-        <Link className="button" href="/repairs/new">
-          New Repair
-        </Link>
+        <div className="hero-actions">
+          <div className="desktop-only">
+            <RepairBackButton />
+          </div>
+          <RepairHeroNav active="list" />
+        </div>
       </section>
 
       <section className="card grid">
         <div className="toolbar">
           <h2>Repair List</h2>
           <div className="actions">
-            <button className="button secondary" onClick={load} disabled={isPending}>
-              {isPending ? "Filtering..." : "Apply Filters"}
+            <button className="button" onClick={() => load()} disabled={isPending} type="button">
+              {isPending ? "Searching..." : "Search"}
             </button>
-            <a className="button secondary" href={exportUrl}>
-              Export CSV
-            </a>
+            <div className="desktop-only">
+              <button className="button secondary" onClick={reset} disabled={isPending} type="button">
+                Reset
+              </button>
+              <a className="button secondary" href={exportUrl}>
+                Export CSV
+              </a>
+            </div>
           </div>
         </div>
 
-        <div className="grid three">
-          <Field label="Repair Number" value={filters.repairNumber} onChange={(value) => setFilters({ ...filters, repairNumber: value })} />
-          <label className="field">
-            <span>Status</span>
-            <select className="input" value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
-              <option value="">All statuses</option>
-              {REPAIR_STATUSES.map((status) => (
-                <option key={status}>{status}</option>
-              ))}
-            </select>
-          </label>
-          <Field label="Party" value={filters.party} onChange={(value) => setFilters({ ...filters, party: value })} />
-          <Field label="Product Code" value={filters.productCode} onChange={(value) => setFilters({ ...filters, productCode: value })} />
-          <Field label="Staff" value={filters.staff} onChange={(value) => setFilters({ ...filters, staff: value })} />
-          <Field label="From" type="date" value={filters.from} onChange={(value) => setFilters({ ...filters, from: value })} />
-          <Field label="To" type="date" value={filters.to} onChange={(value) => setFilters({ ...filters, to: value })} />
+        <div className="grid two search-grid">
+          <Field label="Party Name" value={filters.party} onChange={(value) => setFilters({ ...filters, party: value })} />
+          <Field label="Search by person name" value={filters.person} onChange={(value) => setFilters({ ...filters, person: value })} />
         </div>
+
+        {error ? <div className="notice">{error}</div> : null}
 
         {repairs.length === 0 ? (
-          <div className="notice">No repairs yet. Create the first receipt and the list will wake up.</div>
+          <div className="notice">No repairs found.</div>
         ) : (
-          <div className="table-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Repair</th>
-                  <th>Status</th>
-                  <th>Party</th>
-                  <th>Product</th>
-                  <th>Qty</th>
-                  <th>Received</th>
-                  <th>Staff</th>
-                </tr>
-              </thead>
-              <tbody>
-                {repairs.map((repair) => (
-                  <tr key={repair.id}>
-                    <td>
+          <>
+            <div className="repair-card-list">
+              {repairs.map((repair) => {
+                const person = relevantPersonLabel(repair);
+                return (
+                  <article className="repair-card" key={repair.id}>
+                    <div className="toolbar">
                       <Link href={`/repairs/${repair.id}`}>
-                        <strong>{repair.repairNumber}</strong>
+                        <strong>Open Preview</strong>
                       </Link>
-                    </td>
-                    <td>
-                      <StatusBadge status={repair.currentStatus} />
-                    </td>
-                    <td>{repair.party.name}</td>
-                    <td>
-                      {repair.product.code}
+                      <StatusBadge status={repair.status} />
+                    </div>
+                    <div>
+                      <strong>{repair.party.name}</strong>
                       <br />
-                      <small>{repair.product.name}</small>
-                    </td>
-                    <td>{repair.quantity}</td>
-                    <td>{new Date(repair.receivedAt).toLocaleString()}</td>
-                    <td>{repair.receiverStaffName}</td>
+                      {repair.productDetails}
+                      <br />
+                      {person.label}: {person.value}
+                    </div>
+                    <small>{new Date(repair.createdAt).toLocaleString()}</small>
+                    <div className="actions">
+                      <Link className="button" href={`/repairs/${repair.id}`}>
+                        Preview
+                      </Link>
+                      <Link className="button secondary" href={`/repairs/${repair.id}/receipt`}>
+                        Receipt
+                      </Link>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+            <div className="table-wrap repair-table">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Preview</th>
+                    <th>Status</th>
+                    <th>Party</th>
+                    <th>Product</th>
+                    <th>Price</th>
+                    <th>Created</th>
+                    <th>Person</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {repairs.map((repair) => {
+                    const person = relevantPersonLabel(repair);
+                    return (
+                      <tr key={repair.id}>
+                        <td>
+                          <Link className="button secondary" href={`/repairs/${repair.id}`}>
+                            Preview
+                          </Link>
+                        </td>
+                        <td>
+                          <StatusBadge status={repair.status} />
+                        </td>
+                        <td>{repair.party.name}</td>
+                        <td>{repair.productDetails}</td>
+                        <td>{repair.sellingPrice}</td>
+                        <td>{new Date(repair.createdAt).toLocaleString()}</td>
+                        <td>{person.value}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </section>
     </main>
@@ -123,16 +174,18 @@ function Field({
   value,
   onChange,
   type = "text",
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
   type?: string;
+  placeholder?: string;
 }) {
   return (
     <label className="field">
       <span>{label}</span>
-      <input className="input" type={type} value={value} onChange={(event) => onChange(event.target.value)} />
+      <input className="input" type={type} value={value} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }

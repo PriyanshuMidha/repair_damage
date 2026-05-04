@@ -1,9 +1,9 @@
-import Link from "next/link";
 import { notFound } from "next/navigation";
 import { PrintButton } from "@/components/PrintButton";
-import { StatusBadge } from "@/components/StatusBadge";
-import { buildWhatsAppMessage, buildWhatsAppUrl, formatDate } from "@/lib/receipt";
+import { RepairBackButton } from "@/components/RepairBackButton";
+import { formatDate, formatMoney } from "@/lib/receipt";
 import { getRepair } from "@/lib/mongoStore";
+import { relevantPersonLabel } from "@/lib/workflow";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -12,82 +12,75 @@ export default async function ReceiptPage({ params }: Params) {
   const repair = await getRepair(id);
   if (!repair) notFound();
 
-  const message = buildWhatsAppMessage(repair);
+  const person = relevantPersonLabel(repair);
+  const receiptRows = [
+    { label: "Date ID", value: repair.repairDateId },
+    { label: "Product Details", value: repair.productDetails },
+    ...(repair.productColor ? [{ label: "Color", value: repair.productColor }] : []),
+    { label: person.label, value: person.value },
+    { label: "Selling Price", value: formatMoney(repair.sellingPrice) },
+    { label: "Created Date", value: formatDate(repair.createdAt) },
+  ];
 
   return (
     <>
-      <div className="shell no-print">
-        <div className="toolbar">
-          <Link className="button secondary" href={`/repairs/${repair.id}`}>
-            Back to Repair
-          </Link>
+      <div className="no-print receipt-toolbar-wrap">
+        <div className="toolbar receipt-toolbar">
+          <RepairBackButton />
           <div className="actions">
             <PrintButton />
             <a className="button secondary" href={`/api/repairs/${repair.id}/receipt/pdf`}>
-              Download PDF
-            </a>
-            <a className="button secondary" href={buildWhatsAppUrl(message)} target="_blank" rel="noreferrer">
-              Share WhatsApp
+              Download Receipt
             </a>
           </div>
         </div>
       </div>
-      <main className="receipt">
-        <div className="eyebrow">Damaged Goods Repair Receipt</div>
-        <h1>{repair.repairNumber}</h1>
-        <p>
-          Received on {formatDate(repair.receivedAt)} by {repair.receiverStaffName}. This receipt confirms goods were received for repair assessment.
-        </p>
-
-        <table>
-          <tbody>
-            <tr>
-              <th>Status</th>
-              <td>
-                <StatusBadge status={repair.currentStatus} />
-              </td>
-            </tr>
-            <tr>
-              <th>Party</th>
-              <td>
-                {repair.party.name} · {repair.party.phone}
-              </td>
-            </tr>
-            <tr>
-              <th>Product</th>
-              <td>
-                {repair.product.code} - {repair.product.name} ({repair.product.color})
-              </td>
-            </tr>
-            <tr>
-              <th>Quantity</th>
-              <td>{repair.quantity}</td>
-            </tr>
-            <tr>
-              <th>Billing</th>
-              <td>{repair.isBilled ? `Yes - ${repair.billOrGrReference}` : "No"}</td>
-            </tr>
-            <tr>
-              <th>Condition</th>
-              <td>{repair.productCondition}</td>
-            </tr>
-            <tr>
-              <th>Damage</th>
-              <td>
-                {repair.damageCategory}
-                <br />
-                {repair.damageRemarks}
-              </td>
-            </tr>
-            <tr>
-              <th>Photos</th>
-              <td>{repair.photos.length ? `${repair.photos.length} attached` : "No photo attached at receipt time"}</td>
-            </tr>
-          </tbody>
-        </table>
-
-        <p>Customer/party acknowledgement: ________________________________</p>
+      <main className="receipt-page">
+        <ReceiptSheet partyName={repair.party.name} productDetails={repair.productDetails} createdDate={formatDate(repair.createdAt)} rows={receiptRows} />
+        <section className="receipt-print-sheet print-only">
+          <ReceiptSheet partyName={repair.party.name} productDetails={repair.productDetails} createdDate={formatDate(repair.createdAt)} rows={receiptRows} />
+          <div className="receipt-cutline">Cut Here</div>
+          <ReceiptSheet partyName={repair.party.name} productDetails={repair.productDetails} createdDate={formatDate(repair.createdAt)} rows={receiptRows} />
+        </section>
       </main>
     </>
+  );
+}
+
+function ReceiptSheet({
+  partyName,
+  productDetails,
+  createdDate,
+  rows,
+}: {
+  partyName: string;
+  productDetails: string;
+  createdDate: string;
+  rows: Array<{ label: string; value: string }>;
+}) {
+  return (
+    <section className="receipt screen-only-print-copy">
+      <div className="receipt-topline">
+        <span className="eyebrow">Repair Receipt</span>
+        <span>{createdDate}</span>
+      </div>
+      <div className="receipt-heading">
+        <div>
+          <h1>{partyName}</h1>
+          <p className="receipt-summary">{productDetails}</p>
+        </div>
+      </div>
+
+      <table className="receipt-kv">
+        <tbody>
+          {rows.map((row) => (
+            <tr key={row.label}>
+              <th>{row.label}</th>
+              <td>{row.value}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
   );
 }

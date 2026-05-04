@@ -6,8 +6,9 @@ import type {
   Party,
   Product,
   Repair,
+  RepairAuditAction,
+  RepairAuditEntry,
   RepairDetail,
-  RepairHistory,
   RepairListFilters,
   RepairPhoto,
   RepairReceipt,
@@ -21,9 +22,7 @@ type DataStore = {
   users: User[];
   repairs: Repair[];
   photos: RepairPhoto[];
-  history: RepairHistory[];
   receipts: RepairReceipt[];
-  sequenceByDate: Record<string, number>;
 };
 
 const globalForStore = globalThis as unknown as { repairStore?: DataStore };
@@ -47,9 +46,7 @@ export const store: DataStore =
     ],
     repairs: [],
     photos: [],
-    history: [],
     receipts: [],
-    sequenceByDate: {},
   });
 
 export function currentUser(role: "staff" | "admin" = "admin") {
@@ -68,13 +65,47 @@ export function listRepairs(filters: RepairListFilters = {}) {
   return store.repairs
     .map(hydrateRepair)
     .filter((repair) => {
-      if (filters.status && isRepairStatus(filters.status) && repair.currentStatus !== filters.status) return false;
+      if (filters.status && isRepairStatus(filters.status) && repair.status !== filters.status) return false;
       if (filters.party && !repair.party.name.toLowerCase().includes(filters.party.toLowerCase())) return false;
-      if (filters.productCode && !repair.product.code.toLowerCase().includes(filters.productCode.toLowerCase())) return false;
-      if (filters.staff && !repair.receiverStaffName.toLowerCase().includes(filters.staff.toLowerCase())) return false;
+      if (filters.person) {
+        const people = [
+          repair.receivedFromCustomerBy,
+          repair.sentToRepairBy,
+          repair.receivedFromRepairBy,
+          repair.sentToCustomerBy,
+          ...repair.auditTimeline.map((item) => item.personName),
+        ]
+          .filter(Boolean)
+          .join(" ")
+          .toLowerCase();
+        if (!people.includes(filters.person.toLowerCase())) return false;
+      }
       if (filters.repairNumber && !repair.repairNumber.toLowerCase().includes(filters.repairNumber.toLowerCase())) return false;
-      if (filters.from && new Date(repair.receivedAt) < new Date(filters.from)) return false;
-      if (filters.to && new Date(repair.receivedAt) > endOfDay(filters.to)) return false;
+      if (filters.from && new Date(repair.createdAt) < new Date(filters.from)) return false;
+      if (filters.to && new Date(repair.createdAt) > endOfDay(filters.to)) return false;
+      if (filters.search) {
+        const n = filters.search.trim().toLowerCase();
+        if (n) {
+          const hay = [
+            repair.repairNumber,
+            repair.repairDateId,
+            repair.status,
+            repair.party.name,
+            repair.productName,
+            repair.productDetails,
+            repair.productColor,
+            repair.receivedFromCustomerBy,
+            repair.sentToRepairBy,
+            repair.receivedFromRepairBy,
+            repair.sentToCustomerBy,
+            ...repair.auditTimeline.map((item) => item.personName),
+          ]
+            .filter(Boolean)
+            .join(" ")
+            .toLowerCase();
+          if (!hay.includes(n)) return false;
+        }
+      }
       return true;
     })
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
@@ -91,44 +122,61 @@ export function createRepair(input: CreateRepairInput) {
   const user = currentUser("staff");
   const repair: Repair = {
     id: crypto.randomUUID(),
-    repairNumber: nextRepairNumber(),
+    repairNumber: nextRepairNumber(input.partyName, input.productName ?? input.productDetails),
+    repairDateId: buildRepairDateId(now),
     partyId: input.partyId,
-    productId: input.productId,
-    quantity: input.quantity || 1,
-    isBilled: input.isBilled,
-    billOrGrReference: input.billOrGrReference?.trim() || undefined,
-    damageCategory: input.damageCategory,
-    damageRemarks: input.damageRemarks.trim(),
-    productCondition: input.productCondition.trim(),
-    currentStatus: "Received",
-    receivedByUserId: user.id,
-    receiverStaffName: input.receiverStaffName.trim(),
+    partyName: input.partyName.trim(),
+    productName: input.productName?.trim() || input.productDetails.trim(),
+    productDetails: input.productDetails.trim(),
+    productColor: input.productColor?.trim() || undefined,
+    sellingPrice: Number(input.sellingPrice),
+    status: "Received",
     createdAt: now,
     updatedAt: now,
-    receivedAt: now,
+    receivedFromCustomerBy: input.receivedFromCustomerBy.trim(),
+    initialRemark: input.initialRemark.trim(),
+    auditTimeline: [
+      buildAuditEntry("CREATE", "New", "Received", "Received from customer by", input.receivedFromCustomerBy.trim(), input.initialRemark.trim(), now),
+    ],
+    receivedByUserId: user.id,
   };
 
   store.repairs.push(repair);
-  addHistory(repair, "create", undefined, "Received", user.id, "Repair received", {});
   generateReceipt(repair.id, user.id);
   return hydrateRepair(repair);
 }
 
 export function updateRepairWhileReceived(id: string, input: Partial<CreateRepairInput>) {
   const repair = findRepair(id);
-  if (repair.currentStatus !== "Received") {
-    throw new Error("Only Received repairs can be edited by staff.");
+  if (repair.status !== "Received") {
+    throw new Error("Only repairs in Received status can be edited.");
   }
-  applyCorePatch(repair, input);
-  addHistory(repair, "update", repair.currentStatus, repair.currentStatus, currentUser("staff").id, "Staff updated received repair", {});
-  return hydrateRepair(repair);
+
+  const nextRepair: Repair = {
+    ...repair,
+    partyId: input.partyId ?? repair.partyId,
+    partyName: input.partyName?.trim() ?? repair.partyName,
+    productName: input.productName?.trim() || repair.productName,
+    productDetails: input.productDetails?.trim() ?? repair.productDetails,
+    productColor: input.productColor?.trim() || repair.productColor,
+    sellingPrice: input.sellingPrice !== undefined ? Number(input.sellingPrice) : repair.sellingPrice,
+    receivedFromCustomerBy: input.receivedFromCustomerBy?.trim() ?? repair.receivedFromCustomerBy,
+    initialRemark: input.initialRemark?.trim() ?? repair.initialRemark,
+    updatedAt: new Date().toISOString(),
+  };
+
+  validateCreateInput(nextRepair);
+  nextRepair.auditTimeline = [
+    ...repair.auditTimeline,
+    buildAuditEntry("UPDATE", repair.status, repair.status, "Updated by", currentUser("staff").name, "Repair details updated", nextRepair.updatedAt),
+  ];
+
+  replaceRepair(nextRepair);
+  return hydrateRepair(nextRepair);
 }
 
 export function uploadPhoto(id: string, fileName: string, url?: string) {
   const repair = findRepair(id);
-  if (repair.currentStatus === "Returned To Customer" || repair.currentStatus === "Cancelled") {
-    throw new Error("Photos cannot be added after final closure.");
-  }
   const user = currentUser("staff");
   const photo: RepairPhoto = {
     id: crypto.randomUUID(),
@@ -139,6 +187,10 @@ export function uploadPhoto(id: string, fileName: string, url?: string) {
     uploadedAt: new Date().toISOString(),
   };
   store.photos.push(photo);
+
+  repair.productImageDriveLink = photo.url;
+  repair.productImageFileName = photo.fileName;
+  repair.updatedAt = photo.uploadedAt;
   return photo;
 }
 
@@ -147,58 +199,45 @@ export function performAction(id: string, payload: ActionPayload, role: "staff" 
   const user = currentUser(role);
   assertValidAction(repair, payload, user.role);
 
-  if (payload.action === "admin-correct") {
-    applyCorePatch(repair, payload.patch ?? {});
-    repair.correctionReason = payload.remarks;
-    repair.updatedAt = new Date().toISOString();
-    addHistory(repair, "admin-correct", repair.currentStatus, repair.currentStatus, user.id, payload.remarks, { patch: payload.patch });
-    return hydrateRepair(repair);
-  }
-
-  const fromStatus = repair.currentStatus;
-  const toStatus = nextStatusForAction(payload.action);
   const now = new Date().toISOString();
+  const fromStatus = repair.status;
+  const toStatus = nextStatusForAction(payload.action);
 
-  repair.currentStatus = toStatus;
+  repair.status = toStatus;
   repair.updatedAt = now;
 
   if (payload.action === "send-to-repair") {
-    repair.repairCenter = payload.repairCenter;
-    repair.sentToRepairByStaffName = payload.sentToRepairByStaffName;
-    repair.sentToRepairAt = now;
-  }
-  if (payload.action === "receive-from-repair") {
-    repair.receivedAfterRepairByStaffName = payload.receivedAfterRepairByStaffName;
-    repair.receivedAfterRepairAt = now;
-  }
-  if (payload.action === "mark-ready") {
-    repair.checkedByStaffName = payload.checkedByStaffName;
-    repair.readyToReturnAt = now;
-  }
-  if (payload.action === "mark-rework") {
-    repair.checkedByStaffName = payload.checkedByStaffName;
-    repair.reworkRequiredAt = now;
-  }
-  if (payload.action === "mark-failed") {
-    repair.checkedByStaffName = payload.checkedByStaffName;
-    repair.repairFailedAt = now;
-  }
-  if (payload.action === "cancel") {
-    repair.cancelledAt = now;
-    repair.cancellationReason = payload.remarks;
-  }
-  if (payload.action === "return-to-customer") {
-    repair.returnedAt = now;
-    repair.returnedByStaffName = payload.returnedByStaffName;
-    repair.returnReceivedBy = payload.returnReceivedBy;
-    repair.deliveryMode = payload.deliveryMode;
-    repair.courierName = payload.courierName;
-    repair.trackingNumber = payload.trackingNumber;
-    repair.transportName = payload.transportName;
-    repair.returnRemarks = payload.remarks;
+    repair.sentToRepairBy = payload.sentToRepairBy?.trim();
+    repair.sentToRepairNote = payload.sentToRepairNote?.trim() || undefined;
+    repair.auditTimeline.push(
+      buildAuditEntry("SEND_TO_REPAIR", fromStatus, toStatus, "Sent to repair by", repair.sentToRepairBy ?? user.name, repair.sentToRepairNote, now),
+    );
   }
 
-  addHistory(repair, payload.action, fromStatus, toStatus, user.id, payload.remarks, { ...payload });
+  if (payload.action === "receive-from-repair") {
+    repair.receivedFromRepairBy = payload.receivedFromRepairBy?.trim();
+    repair.receivedFromRepairNote = payload.receivedFromRepairNote?.trim() || undefined;
+    repair.auditTimeline.push(
+      buildAuditEntry(
+        "RECEIVE_FROM_REPAIR",
+        fromStatus,
+        toStatus,
+        "Received from repair by",
+        repair.receivedFromRepairBy ?? user.name,
+        repair.receivedFromRepairNote,
+        now,
+      ),
+    );
+  }
+
+  if (payload.action === "send-to-customer") {
+    repair.sentToCustomerBy = payload.sentToCustomerBy?.trim();
+    repair.sentToCustomerNote = payload.sentToCustomerNote?.trim() || undefined;
+    repair.auditTimeline.push(
+      buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now),
+    );
+  }
+
   return hydrateRepair(repair);
 }
 
@@ -228,81 +267,54 @@ export function generateReceipt(id: string, userId = currentUser("staff").id) {
 
 export function repairsToCsv(filters: RepairListFilters = {}) {
   const rows = listRepairs(filters);
-  const header = ["Repair Number", "Status", "Party", "Product Code", "Product", "Quantity", "Billed", "Reference", "Received At", "Staff"];
+  const header = ["Repair Number", "Date ID", "Status", "Party", "Product Details", "Selling Price", "Person"];
   const body = rows.map((repair) => [
     repair.repairNumber,
-    repair.currentStatus,
+    repair.repairDateId,
+    repair.status,
     repair.party.name,
-    repair.product.code,
-    repair.product.name,
-    String(repair.quantity),
-    repair.isBilled ? "Yes" : "No",
-    repair.billOrGrReference ?? "",
-    repair.receivedAt,
-    repair.receiverStaffName,
+    repair.productDetails,
+    String(repair.sellingPrice),
+    latestPerson(repair),
   ]);
   return [header, ...body].map((row) => row.map(csvCell).join(",")).join("\n");
 }
 
 function hydrateRepair(repair: Repair): RepairDetail {
-  const party = store.parties.find((item) => item.id === repair.partyId);
-  const product = store.products.find((item) => item.id === repair.productId);
-  const receivedBy = store.users.find((item) => item.id === repair.receivedByUserId);
-  if (!party || !product || !receivedBy) throw new Error("Repair master data is missing.");
-  const safeRepair = normalizeRepair(repair, receivedBy.name);
+  const party = store.parties.find((item) => item.id === repair.partyId) ?? {
+    id: repair.partyId ?? `manual:${repair.id}`,
+    name: repair.partyName,
+    phone: "",
+    type: "Customer" as const,
+  };
+  const product = store.products.find((item) => item.id === repair.productName) ?? {
+    id: `manual:${repair.id}`,
+    code: "",
+    name: repair.productName || repair.productDetails,
+    color: repair.productColor ?? "",
+    saleRate: repair.sellingPrice,
+    purchaseRate: 0,
+  };
+  const receivedBy = repair.receivedByUserId ? store.users.find((item) => item.id === repair.receivedByUserId) : undefined;
 
   return {
-    ...safeRepair,
+    ...repair,
     party,
     product,
     receivedBy,
-    photos: store.photos.filter((photo) => photo.repairId === repair.id),
-    history: store.history.filter((item) => item.repairId === repair.id).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    photos: store.photos.filter((item) => item.repairId === repair.id).sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)),
     receipts: store.receipts.filter((item) => item.repairId === repair.id).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)),
+    auditTimeline: [...repair.auditTimeline].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   };
 }
 
-function normalizeRepair(repair: Repair, fallbackStaffName: string): Repair {
-  return {
-    ...repair,
-    receiverStaffName: repair.receiverStaffName ?? fallbackStaffName,
-    productCondition: repair.productCondition ?? repair.damageRemarks ?? "Not specified",
-  };
-}
-
-function validateCreateInput(input: CreateRepairInput) {
-  if (!store.parties.some((party) => party.id === input.partyId)) throw new Error("Valid party is required.");
-  if (!store.products.some((product) => product.id === input.productId)) throw new Error("Valid product is required.");
-  if (!Number.isInteger(input.quantity) || input.quantity < 1) throw new Error("Quantity must be at least 1.");
-  if (input.isBilled && !input.billOrGrReference?.trim()) throw new Error("Bill/GR reference is required when billed.");
-  if (!input.damageCategory) throw new Error("Damage category is required.");
-  if (!input.damageRemarks?.trim()) throw new Error("Damage remarks are required.");
-  if (!input.productCondition?.trim()) throw new Error("Product condition is required.");
-  if (!input.receiverStaffName?.trim()) throw new Error("Receiver staff name is required.");
-}
-
-function applyCorePatch(repair: Repair, input: Partial<CreateRepairInput>) {
-  if (input.partyId) repair.partyId = input.partyId;
-  if (input.productId) repair.productId = input.productId;
-  if (input.quantity !== undefined) repair.quantity = input.quantity;
-  if (input.isBilled !== undefined) repair.isBilled = input.isBilled;
-  if (input.billOrGrReference !== undefined) repair.billOrGrReference = input.billOrGrReference;
-  if (input.damageCategory) repair.damageCategory = input.damageCategory;
-  if (input.damageRemarks) repair.damageRemarks = input.damageRemarks;
-  if (input.productCondition) repair.productCondition = input.productCondition;
-  if (input.receiverStaffName) repair.receiverStaffName = input.receiverStaffName;
-  validateCreateInput({
-    partyId: repair.partyId,
-    productId: repair.productId,
-    quantity: repair.quantity,
-    isBilled: repair.isBilled,
-    billOrGrReference: repair.billOrGrReference,
-    damageCategory: repair.damageCategory,
-    damageRemarks: repair.damageRemarks,
-    productCondition: repair.productCondition,
-    receiverStaffName: repair.receiverStaffName,
-  });
-  repair.updatedAt = new Date().toISOString();
+function validateCreateInput(input: CreateRepairInput | Repair) {
+  if (!input.partyName?.trim()) throw new Error("Party name is required.");
+  if (!input.productDetails?.trim()) throw new Error("Product details are required.");
+  if (!input.initialRemark?.trim()) throw new Error("Remark is required.");
+  if (!input.receivedFromCustomerBy?.trim()) throw new Error("Received from customer by is required.");
+  const sellingPrice = Number(input.sellingPrice);
+  if (!Number.isFinite(sellingPrice)) throw new Error("Selling price is required.");
 }
 
 function findRepair(id: string) {
@@ -311,34 +323,53 @@ function findRepair(id: string) {
   return repair;
 }
 
-function addHistory(
-  repair: Repair,
-  action: string,
-  fromStatus: RepairStatus | undefined,
-  toStatus: RepairStatus,
-  userId: string,
-  remarks?: string,
-  metadata?: Record<string, unknown>,
-) {
-  const user = store.users.find((item) => item.id === userId) ?? currentUser();
-  store.history.push({
-    id: crypto.randomUUID(),
-    repairId: repair.id,
-    action,
-    fromStatus,
-    toStatus,
-    userId: user.id,
-    userName: user.name,
-    remarks,
-    metadata,
-    createdAt: new Date().toISOString(),
-  });
+function replaceRepair(repair: Repair) {
+  const index = store.repairs.findIndex((item) => item.id === repair.id);
+  if (index === -1) throw new Error("Repair not found.");
+  store.repairs[index] = repair;
 }
 
-function nextRepairNumber() {
-  const key = new Date().toISOString().slice(0, 10).replaceAll("-", "");
-  store.sequenceByDate[key] = (store.sequenceByDate[key] ?? 0) + 1;
-  return `REP-${key}-${String(store.sequenceByDate[key]).padStart(4, "0")}`;
+function buildAuditEntry(
+  action: RepairAuditAction,
+  previousStatus: RepairStatus | "New",
+  newStatus: RepairStatus,
+  roleLabel: string,
+  personName: string,
+  note: string | undefined,
+  createdAt: string,
+): RepairAuditEntry {
+  return {
+    id: crypto.randomUUID(),
+    action,
+    previousStatus,
+    newStatus,
+    roleLabel,
+    personName,
+    note: note?.trim() || undefined,
+    createdAt,
+  };
+}
+
+function nextRepairNumber(partyName: string, productName = "") {
+  const prefix = `${prefixPart(partyName)}${prefixPart(productName)}`;
+  for (let i = 0; i < 100; i += 1) {
+    const suffix = String(Math.floor(Math.random() * 100)).padStart(2, "0");
+    const candidate = `${prefix}${suffix}`;
+    if (!store.repairs.find((item) => item.repairNumber === candidate)) return candidate;
+  }
+  throw new Error("Could not generate a unique repair ID. Try again.");
+}
+
+function prefixPart(value: string) {
+  return (value.replace(/[^a-z0-9]/gi, "").toUpperCase() + "XX").slice(0, 2);
+}
+
+function buildRepairDateId(value: string) {
+  const date = new Date(value);
+  const yyyy = date.getFullYear();
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}${mm}${dd}`;
 }
 
 function endOfDay(value: string) {
@@ -349,4 +380,13 @@ function endOfDay(value: string) {
 
 function csvCell(value: string) {
   return `"${value.replaceAll('"', '""')}"`;
+}
+
+function latestPerson(repair: Repair) {
+  return (
+    repair.sentToCustomerBy ||
+    repair.receivedFromRepairBy ||
+    repair.sentToRepairBy ||
+    repair.receivedFromCustomerBy
+  );
 }

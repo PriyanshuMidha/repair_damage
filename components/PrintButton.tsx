@@ -1,9 +1,9 @@
 "use client";
 
-export function PrintButton() {
+export function PrintButton({ label = "Print Receipt" }: { label?: string }) {
   return (
-    <button className="button" onClick={() => window.print()}>
-      Use Browser Print
+    <button className="button secondary" type="button" onClick={() => window.print()}>
+      {label}
     </button>
   );
 }

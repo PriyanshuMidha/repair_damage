@@ -4,13 +4,9 @@ import { repairsToCsv } from "@/lib/mongoStore";
 export async function GET(request: NextRequest) {
   const search = request.nextUrl.searchParams;
   const csv = await repairsToCsv({
-    status: search.get("status") ?? undefined,
     party: search.get("party") ?? undefined,
-    productCode: search.get("productCode") ?? undefined,
-    staff: search.get("staff") ?? undefined,
-    repairNumber: search.get("repairNumber") ?? undefined,
-    from: search.get("from") ?? undefined,
-    to: search.get("to") ?? undefined,
+    person: search.get("person") ?? undefined,
+    search: search.get("search") ?? undefined,
   });
 
   return new NextResponse(csv, {

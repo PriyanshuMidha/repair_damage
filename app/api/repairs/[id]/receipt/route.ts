@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateReceipt, getRepair } from "@/lib/mongoStore";
-import { buildWhatsAppMessage, buildWhatsAppUrl, renderReceiptHtml } from "@/lib/receipt";
+import { renderReceiptHtml } from "@/lib/receipt";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -15,10 +15,7 @@ export async function POST(_: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const receipt = await generateReceipt(id);
-    const repair = await getRepair(id);
-    if (!repair) return NextResponse.json({ error: "Repair not found." }, { status: 404 });
-    const message = buildWhatsAppMessage(repair);
-    return NextResponse.json({ receipt, whatsAppMessage: message, whatsAppUrl: buildWhatsAppUrl(message) });
+    return NextResponse.json({ receipt });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
   }

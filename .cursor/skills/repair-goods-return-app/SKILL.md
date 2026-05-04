@@ -21,7 +21,7 @@ Whenever we add a new feature, field, business rule, API, UI page, status, or ed
 
 ## Quick pointers
 
-- Primary statuses: Received → Sent To Repair / Repair In Progress → Received After Repair → Ready To Return → Returned To Customer.
+- Primary statuses: Received → Sent To Repair → Repair In Progress → Received After Repair → Ready To Return → Returned To Customer; exceptions: Rework Required, Repair Failed, Rejected, Cancelled.
 - Full field lists, suggested tables, API routes, UI pages, edge cases, and phase plan live in the project markdown only—read it when scope touches those areas.
 
 ## Additional resources

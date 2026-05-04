@@ -1,30 +1,11 @@
 export const REPAIR_STATUSES = [
   "Received",
   "Repair In Progress",
-  "Received After Repair",
-  "Ready To Return",
-  "Rework Required",
-  "Repair Failed",
-  "Returned To Customer",
-  "Cancelled",
+  "Repair Received",
+  "Sent to Customer",
 ] as const;
 
 export type RepairStatus = (typeof REPAIR_STATUSES)[number];
-
-export const DAMAGE_CATEGORIES = [
-  "Screen/Glass Damage",
-  "Body Damage",
-  "Water Damage",
-  "Electrical Fault",
-  "Missing Part",
-  "Packaging Damage",
-  "Other",
-] as const;
-
-export type DamageCategory = (typeof DAMAGE_CATEGORIES)[number];
-
-export const DELIVERY_MODES = ["By Hand", "Courier", "Transport", "Other"] as const;
-export type DeliveryMode = (typeof DELIVERY_MODES)[number];
 
 export type Role = "staff" | "admin";
 
@@ -69,109 +50,81 @@ export type RepairReceipt = {
   lastError?: string;
 };
 
-export type RepairHistory = {
+export type RepairAuditAction = "CREATE" | "SEND_TO_REPAIR" | "RECEIVE_FROM_REPAIR" | "SEND_TO_CUSTOMER" | "UPDATE";
+
+export type RepairAuditEntry = {
   id: string;
-  repairId: string;
-  action: string;
-  fromStatus?: RepairStatus;
-  toStatus: RepairStatus;
-  userId: string;
-  userName: string;
-  remarks?: string;
-  metadata?: Record<string, unknown>;
+  action: RepairAuditAction;
+  previousStatus?: RepairStatus | "New";
+  newStatus: RepairStatus;
+  roleLabel: string;
+  personName: string;
+  note?: string;
   createdAt: string;
 };
 
 export type Repair = {
   id: string;
   repairNumber: string;
-  partyId: string;
-  productId: string;
-  quantity: number;
-  isBilled: boolean;
-  billOrGrReference?: string;
-  damageCategory: DamageCategory;
-  damageRemarks: string;
-  productCondition: string;
-  currentStatus: RepairStatus;
-  receivedByUserId: string;
-  receiverStaffName: string;
+  repairDateId: string;
+  partyId?: string;
+  partyName: string;
+  productName?: string;
+  productDetails: string;
+  productColor?: string;
+  sellingPrice: number;
+  status: RepairStatus;
   createdAt: string;
   updatedAt: string;
-  receivedAt: string;
-  sentToRepairAt?: string;
-  receivedAfterRepairAt?: string;
-  readyToReturnAt?: string;
-  reworkRequiredAt?: string;
-  repairFailedAt?: string;
-  returnedAt?: string;
-  cancelledAt?: string;
-  repairCenter?: string;
-  sentToRepairByStaffName?: string;
-  receivedAfterRepairByStaffName?: string;
-  checkedByStaffName?: string;
-  returnedByStaffName?: string;
-  returnReceivedBy?: string;
-  deliveryMode?: DeliveryMode;
-  courierName?: string;
-  trackingNumber?: string;
-  transportName?: string;
-  returnRemarks?: string;
-  cancellationReason?: string;
-  correctionReason?: string;
+  receivedFromCustomerBy: string;
+  sentToRepairBy?: string;
+  receivedFromRepairBy?: string;
+  sentToCustomerBy?: string;
+  initialRemark: string;
+  sentToRepairNote?: string;
+  receivedFromRepairNote?: string;
+  sentToCustomerNote?: string;
+  productImageDriveLink?: string;
+  productImageFileName?: string;
+  auditTimeline: RepairAuditEntry[];
+  receivedByUserId?: string;
 };
 
 export type RepairDetail = Repair & {
   party: Party;
   product: Product;
-  receivedBy: User;
+  receivedBy?: User;
   photos: RepairPhoto[];
-  history: RepairHistory[];
   receipts: RepairReceipt[];
 };
 
 export type CreateRepairInput = {
-  partyId: string;
-  productId: string;
-  quantity: number;
-  isBilled: boolean;
-  billOrGrReference?: string;
-  damageCategory: DamageCategory;
-  damageRemarks: string;
-  productCondition: string;
-  receiverStaffName: string;
+  partyId?: string;
+  partyName: string;
+  productName?: string;
+  productDetails: string;
+  productColor?: string;
+  sellingPrice: number;
+  initialRemark: string;
+  receivedFromCustomerBy: string;
 };
 
 export type RepairListFilters = {
   status?: string;
   party?: string;
-  productCode?: string;
-  staff?: string;
+  person?: string;
   repairNumber?: string;
   from?: string;
   to?: string;
+  search?: string;
 };
 
 export type ActionPayload = {
-  action:
-    | "send-to-repair"
-    | "receive-from-repair"
-    | "mark-ready"
-    | "mark-rework"
-    | "mark-failed"
-    | "return-to-customer"
-    | "cancel"
-    | "admin-correct";
-  remarks?: string;
-  repairCenter?: string;
-  sentToRepairByStaffName?: string;
-  receivedAfterRepairByStaffName?: string;
-  checkedByStaffName?: string;
-  returnedByStaffName?: string;
-  returnReceivedBy?: string;
-  deliveryMode?: DeliveryMode;
-  courierName?: string;
-  trackingNumber?: string;
-  transportName?: string;
-  patch?: Partial<CreateRepairInput>;
+  action: "send-to-repair" | "receive-from-repair" | "send-to-customer";
+  sentToRepairBy?: string;
+  sentToRepairNote?: string;
+  receivedFromRepairBy?: string;
+  receivedFromRepairNote?: string;
+  sentToCustomerBy?: string;
+  sentToCustomerNote?: string;
 };
