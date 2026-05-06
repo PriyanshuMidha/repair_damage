@@ -2,7 +2,7 @@ import { relevantPersonLabel } from "./workflow";
 import type { RepairDetail } from "./types";
 
 export function renderReceiptHtml(repair: RepairDetail) {
-  const person = relevantPersonLabel(repair);
+  const rows = buildReceiptRows(repair);
   return `<!doctype html>
 <html>
 <head>
@@ -35,12 +35,7 @@ export function renderReceiptHtml(repair: RepairDetail) {
       </div>
     </div>
     <table>
-      <tr><th>Date ID</th><td>${escapeHtml(repair.repairDateId)}</td></tr>
-      <tr><th>Product Details</th><td>${escapeHtml(repair.productDetails)}</td></tr>
-      ${repair.productColor ? `<tr><th>Color</th><td>${escapeHtml(repair.productColor)}</td></tr>` : ""}
-      <tr><th>${escapeHtml(person.label)}</th><td>${escapeHtml(person.value)}</td></tr>
-      <tr><th>Selling Price</th><td>${escapeHtml(formatMoney(repair.sellingPrice))}</td></tr>
-      <tr><th>Created Date</th><td>${formatDate(repair.createdAt)}</td></tr>
+      ${rows.map((row) => `<tr><th>${escapeHtml(row.label)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}
     </table>
   </main>
 </body>
@@ -53,15 +48,7 @@ export function buildReceiptLink(repairId: string, origin?: string) {
 }
 
 export function buildPdfBytes(repair: RepairDetail) {
-  const person = relevantPersonLabel(repair);
-  const rows = [
-    ["Date ID", repair.repairDateId],
-    ["Product Details", repair.productDetails],
-    ...(repair.productColor ? [["Color", repair.productColor]] : []),
-    [person.label, person.value],
-    ["Selling Price", formatMoney(repair.sellingPrice)],
-    ["Created Date", formatDate(repair.createdAt)],
-  ] as Array<[string, string]>;
+  const rows = buildReceiptRows(repair).map((row) => [row.label, row.value] as [string, string]);
 
   const pageWidth = 595;
   const pageHeight = 842;
@@ -97,6 +84,18 @@ export function formatMoney(value: number) {
     currency: "INR",
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+export function buildReceiptRows(repair: RepairDetail) {
+  const person = relevantPersonLabel(repair);
+  return [
+    { label: "Date ID", value: repair.repairDateId },
+    { label: "Product Details", value: repair.productDetails },
+    ...(repair.productColor ? [{ label: "Color", value: repair.productColor }] : []),
+    { label: person.label, value: person.value },
+    { label: "Selling Price", value: formatMoney(repair.sellingPrice) },
+    { label: "Created Date", value: formatDate(repair.createdAt) },
+  ];
 }
 
 function escapeHtml(value: string) {

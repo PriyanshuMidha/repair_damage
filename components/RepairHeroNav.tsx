@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { LogoutButton } from "./LogoutButton";
 
 export function RepairHeroNav({ active }: { active: "list" | "reports" }) {
   return (
@@ -12,6 +13,7 @@ export function RepairHeroNav({ active }: { active: "list" | "reports" }) {
       <Link className="button" href="/repairs/new">
         New Repair
       </Link>
+      <LogoutButton />
     </div>
   );
 }

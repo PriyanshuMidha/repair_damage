@@ -48,7 +48,9 @@ export async function listRepairs(filters: RepairListFilters = {}) {
   await ensureMongoReady();
   await ensureSeeded();
   const data = await dataCollection<DataDoc>();
-  const repairs = (await data.find({ kind: "repair" }).toArray()).map((item) => stripKind<Repair>(item));
+  const repairs = (await data.find({ kind: "repair", $or: [{ isDeleted: { $exists: false } }, { isDeleted: false }] }).toArray()).map((item) =>
+    stripKind<Repair>(item),
+  );
   const hydrated = await Promise.all(repairs.map(hydrateRepair));
 
   return hydrated
@@ -178,7 +180,7 @@ export async function updateRepairWhileReceived(id: string, input: Partial<Creat
   }
 }
 
-export async function uploadPhoto(id: string, fileName: string, url?: string) {
+export async function uploadPhoto(id: string, fileName: string, url?: string, kind: "product" | "proof" = "product") {
   await ensureMongoReady();
   const repair = await requireRepair(id);
   const user = await currentUser("staff");
@@ -187,6 +189,7 @@ export async function uploadPhoto(id: string, fileName: string, url?: string) {
     repairId: id,
     fileName: fileName.trim() || "repair-photo.jpg",
     url: url?.trim() || `/uploads/${encodeURIComponent(fileName.trim() || "repair-photo.jpg")}`,
+    kind,
     uploadedByUserId: user.id,
     uploadedAt: new Date().toISOString(),
   };
@@ -194,8 +197,10 @@ export async function uploadPhoto(id: string, fileName: string, url?: string) {
   const data = await dataCollection<DataDoc>();
   await data.insertOne({ _id: `photo:${photo.id}`, kind: "photo", ...photo });
 
-  repair.productImageDriveLink = photo.url;
-  repair.productImageFileName = photo.fileName;
+  if (kind === "product") {
+    repair.productImageDriveLink = photo.url;
+    repair.productImageFileName = photo.fileName;
+  }
   repair.updatedAt = photo.uploadedAt;
   await saveRepair(repair);
   return photo;
@@ -242,7 +247,11 @@ export async function performAction(id: string, payload: ActionPayload, role: "s
     repair.sentToCustomerBy = payload.sentToCustomerBy?.trim();
     repair.sentToCustomerNote = payload.sentToCustomerNote?.trim() || undefined;
     repair.auditTimeline.push(
-      buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now),
+      buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now, {
+        sendingMedium: payload.sentToCustomerSendingMedium?.trim() || undefined,
+        proofPhotoUrl: payload.sentToCustomerProofPhotoUrl?.trim() || undefined,
+        proofPhotoFileName: payload.sentToCustomerProofPhotoFileName?.trim() || undefined,
+      }),
     );
   }
 
@@ -252,6 +261,28 @@ export async function performAction(id: string, payload: ActionPayload, role: "s
   } catch (error) {
     console.error(`[repair-app] Failed action ${payload.action} for repair ${id}.`, error);
     throw new Error("Could not update repair in MongoDB.");
+  }
+}
+
+export async function softDeleteRepair(id: string, deleteReason?: string) {
+  await ensureMongoReady();
+  const repair = await requireRepair(id);
+  const user = await currentUser("staff");
+  const now = new Date().toISOString();
+
+  repair.isDeleted = true;
+  repair.deletedAt = now;
+  repair.deletedBy = user.name;
+  repair.deleteReason = deleteReason?.trim() || undefined;
+  repair.updatedAt = now;
+  repair.auditTimeline.push(buildAuditEntry("DELETE", repair.status, repair.status, "Deleted by", user.name, repair.deleteReason, now));
+
+  try {
+    await saveRepair(repair);
+    return hydrateRepair(repair);
+  } catch (error) {
+    console.error(`[repair-app] Failed to soft delete repair ${id}.`, error);
+    throw new Error("Could not delete repair in MongoDB.");
   }
 }
 
@@ -378,7 +409,7 @@ function validateCreateInput(input: CreateRepairInput | Repair) {
 
 async function findRepair(id: string) {
   const data = await dataCollection<DataDoc>();
-  const repair = await data.findOne({ kind: "repair", id });
+  const repair = await data.findOne({ kind: "repair", id, $or: [{ isDeleted: { $exists: false } }, { isDeleted: false }] });
   return repair ? stripKind<Repair>(repair) : undefined;
 }
 
@@ -401,6 +432,11 @@ function buildAuditEntry(
   personName: string,
   note: string | undefined,
   createdAt: string,
+  metadata?: {
+    sendingMedium?: string;
+    proofPhotoUrl?: string;
+    proofPhotoFileName?: string;
+  },
 ): RepairAuditEntry {
   return {
     id: crypto.randomUUID(),
@@ -410,6 +446,7 @@ function buildAuditEntry(
     roleLabel,
     personName,
     note: note?.trim() || undefined,
+    metadata,
     createdAt,
   };
 }

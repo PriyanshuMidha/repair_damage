@@ -2,31 +2,23 @@
 
 import Link from "next/link";
 import { use, useEffect, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { RepairBackButton } from "@/components/RepairBackButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { actionLabel, allowedActions, relevantPersonLabel, sortedActionsForUi } from "@/lib/workflow";
-import { type ActionPayload, type RepairDetail } from "@/lib/types";
+import { relevantPersonLabel } from "@/lib/workflow";
+import { type RepairDetail } from "@/lib/types";
 
 type Params = { params: Promise<{ id: string }> };
 
-const STAFF_ROLE = "staff" as const;
-
 export default function RepairDetailPage({ params }: Params) {
   const { id } = use(params);
+  const router = useRouter();
   const [repair, setRepair] = useState<RepairDetail | null>(null);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
   const [previewPhoto, setPreviewPhoto] = useState<{ url: string; fileName: string } | null>(null);
-  const [action, setAction] = useState<ActionPayload["action"] | "">("");
-  const [form, setForm] = useState({
-    sentToRepairBy: "",
-    sentToRepairNote: "",
-    receivedFromRepairBy: "",
-    receivedFromRepairNote: "",
-    sentToCustomerBy: "",
-    sentToCustomerNote: "",
-  });
+  const [deleteReason, setDeleteReason] = useState("");
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [isPending, startTransition] = useTransition();
 
   useEffect(() => {
@@ -40,62 +32,29 @@ export default function RepairDetailPage({ params }: Params) {
       if (response.ok) {
         setRepair(data.repair);
         setError("");
-      } else {
-        setError(data.error ?? "Could not load repair.");
+        return;
       }
+      setRepair(null);
+      setError(data.error ?? "Could not load repair.");
     });
   }
 
-  function runAction(selectedAction = action) {
-    if (!selectedAction) return;
+  function confirmDelete() {
     setError("");
     setMessage("");
     startTransition(async () => {
-      const payload = actionPayload(selectedAction, form);
-      const response = await fetch(`/api/repairs/${id}/actions`, {
-        method: "POST",
+      const response = await fetch(`/api/repairs/${id}`, {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, role: STAFF_ROLE }),
+        body: JSON.stringify({ deleteReason }),
       });
       const data = await response.json();
       if (!response.ok) {
-        setError(data.error ?? "Action failed.");
+        setError(data.error ?? "Could not delete repair.");
         return;
       }
-      setRepair(data.repair);
-      setAction("");
-      setForm({
-        sentToRepairBy: "",
-        sentToRepairNote: "",
-        receivedFromRepairBy: "",
-        receivedFromRepairNote: "",
-        sentToCustomerBy: "",
-        sentToCustomerNote: "",
-      });
-      setMessage("Repair updated successfully.");
-    });
-  }
-
-  function uploadPhoto() {
-    setError("");
-    if (!photoFile) {
-      setError("Choose a photo file first.");
-      return;
-    }
-    startTransition(async () => {
-      const photoData = new FormData();
-      photoData.append("photo", photoFile);
-      const response = await fetch(`/api/repairs/${id}/photos`, {
-        method: "POST",
-        body: photoData,
-      });
-      const data = await response.json();
-      if (!response.ok) {
-        setError(data.error ?? "Photo upload failed.");
-        return;
-      }
-      setPhotoFile(null);
-      load();
+      setMessage("Repair deleted successfully.");
+      router.push("/repairs?deleted=1");
     });
   }
 
@@ -107,8 +66,8 @@ export default function RepairDetailPage({ params }: Params) {
     );
   }
 
-  const actions = sortedActionsForUi(allowedActions(repair, STAFF_ROLE));
   const person = relevantPersonLabel(repair);
+  const canEdit = repair.status === "Received";
 
   return (
     <main className="shell">
@@ -122,7 +81,7 @@ export default function RepairDetailPage({ params }: Params) {
         </div>
         <div className="actions">
           <RepairBackButton />
-          {repair.status === "Received" ? (
+          {canEdit ? (
             <Link className="button" href={`/repairs/${repair.id}/edit`}>
               Edit
             </Link>
@@ -130,6 +89,9 @@ export default function RepairDetailPage({ params }: Params) {
           <Link className="button secondary" href={`/repairs/${repair.id}/receipt`}>
             Receipt
           </Link>
+          <button className="button danger" type="button" onClick={() => setShowDeleteConfirm(true)}>
+            Delete
+          </button>
         </div>
       </section>
 
@@ -142,48 +104,54 @@ export default function RepairDetailPage({ params }: Params) {
         </div>
       ) : null}
 
+      {showDeleteConfirm ? (
+        <div className="overlay-dialog" role="dialog" aria-modal="true" aria-label="Delete repair confirmation">
+          <div className="overlay-card">
+            <h2>Delete repair entry?</h2>
+            <p style={{ margin: 0 }}>Are you sure you want to delete this receipt/repair entry? This action cannot be undone.</p>
+            <table>
+              <tbody>
+                <Row label="Repair ID" value={repair.repairNumber} />
+                <Row label="Party" value={repair.party.name} />
+                <Row label="Product" value={repair.product.name || repair.productDetails} />
+              </tbody>
+            </table>
+            <label className="field">
+              <span>Delete Reason (optional)</span>
+              <textarea className="input" value={deleteReason} onChange={(event) => setDeleteReason(event.target.value)} />
+            </label>
+            <div className="actions">
+              <button className="button secondary" type="button" onClick={() => setShowDeleteConfirm(false)}>
+                Cancel
+              </button>
+              <button className="button danger" type="button" disabled={isPending} onClick={confirmDelete}>
+                {isPending ? "Deleting..." : "Confirm Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
       <div className="grid two">
         <section className="card grid">
           <div className="toolbar">
-            <h2>Current State</h2>
+            <h2>Repair Details</h2>
             <StatusBadge status={repair.status} />
           </div>
           <table>
             <tbody>
-              <Row label="Party" value={repair.party.name} />
-              <Row label="Product details" value={repair.productDetails} />
-              {repair.productColor ? <Row label="Product color" value={repair.productColor} /> : null}
-              <Row label={person.label} value={person.value} />
-              <Row label="Selling price" value={String(repair.sellingPrice)} />
+              <Row label="Repair ID" value={repair.repairNumber} />
+              <Row label="Party Name" value={repair.party.name} />
+              <Row label="Staff Name" value={person.value} />
+              <Row label="Product Name" value={repair.product.name || repair.productDetails} />
+              <Row label="Product Details" value={repair.productDetails} />
+              {repair.productColor ? <Row label="Product Color" value={repair.productColor} /> : null}
+              <Row label="Selling Price" value={String(repair.sellingPrice)} />
               <Row label="Remark" value={repair.initialRemark} />
-              <Row label="Created date" value={new Date(repair.createdAt).toLocaleString()} />
+              <Row label="Current Status" value={repair.status} />
+              <Row label="Created Date" value={new Date(repair.createdAt).toLocaleString()} />
             </tbody>
           </table>
-
-          <div className="actions">
-            {actions.length === 0 ? <div className="notice">No more actions are available for this repair.</div> : null}
-            {actions.map((availableAction) => (
-              <button className="button" key={availableAction} type="button" onClick={() => setAction(availableAction)}>
-                {actionLabel(availableAction)}
-              </button>
-            ))}
-          </div>
-
-          {action ? (
-            <div className="card grid">
-              <h3>{actionLabel(action)}</h3>
-              {renderActionFields(action, form, setForm)}
-              <div className="actions">
-                <button className="button" disabled={isPending || !actions.includes(action)} onClick={() => runAction()} type="button">
-                  Confirm
-                </button>
-                <button className="button secondary" onClick={() => setAction("")} type="button">
-                  Close
-                </button>
-              </div>
-              {!actions.includes(action) ? <div className="notice">This action is not allowed from the current status.</div> : null}
-            </div>
-          ) : null}
 
           {error ? <div className="notice">{error}</div> : null}
           {message ? <div className="notice">{message}</div> : null}
@@ -201,16 +169,6 @@ export default function RepairDetailPage({ params }: Params) {
               </button>
             </div>
           ))}
-          <div className="grid">
-            <label className="field">
-              <span>Upload Photo</span>
-              <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} />
-            </label>
-            {photoFile ? <div className="notice">Selected photo: {photoFile.name}</div> : null}
-            <button className="button secondary" onClick={uploadPhoto} disabled={isPending} type="button">
-              Upload Photo
-            </button>
-          </div>
         </section>
       </div>
 
@@ -229,6 +187,15 @@ export default function RepairDetailPage({ params }: Params) {
                 </div>
                 <div className="timeline-meta">{new Date(item.createdAt).toLocaleString()}</div>
                 {item.note ? <p className="timeline-note">{item.note}</p> : null}
+                {item.metadata?.sendingMedium ? <div className="timeline-meta">Medium: {item.metadata.sendingMedium}</div> : null}
+                {item.metadata?.proofPhotoUrl ? (
+                  <div className="timeline-meta">
+                    Proof Photo:{" "}
+                    <a href={item.metadata.proofPhotoUrl} target="_blank" rel="noreferrer">
+                      {item.metadata.proofPhotoFileName ?? "View file"}
+                    </a>
+                  </div>
+                ) : null}
               </div>
             </div>
           ))}
@@ -247,99 +214,6 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Input({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input className="input" value={value} onChange={(event) => onChange(event.target.value)} />
-    </label>
-  );
-}
-
-function TextArea({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <textarea className="input" value={value} onChange={(event) => onChange(event.target.value)} />
-    </label>
-  );
-}
-
-function renderActionFields(
-  action: ActionPayload["action"],
-  form: {
-    sentToRepairBy: string;
-    sentToRepairNote: string;
-    receivedFromRepairBy: string;
-    receivedFromRepairNote: string;
-    sentToCustomerBy: string;
-    sentToCustomerNote: string;
-  },
-  setForm: React.Dispatch<
-    React.SetStateAction<{
-      sentToRepairBy: string;
-      sentToRepairNote: string;
-      receivedFromRepairBy: string;
-      receivedFromRepairNote: string;
-      sentToCustomerBy: string;
-      sentToCustomerNote: string;
-    }>
-  >,
-) {
-  if (action === "send-to-repair") {
-    return (
-      <>
-        <Input label="Sent to repair by" value={form.sentToRepairBy} onChange={(value) => setForm((current) => ({ ...current, sentToRepairBy: value }))} />
-        <TextArea label="Note" value={form.sentToRepairNote} onChange={(value) => setForm((current) => ({ ...current, sentToRepairNote: value }))} />
-      </>
-    );
-  }
-
-  if (action === "receive-from-repair") {
-    return (
-      <>
-        <Input
-          label="Received from repair by"
-          value={form.receivedFromRepairBy}
-          onChange={(value) => setForm((current) => ({ ...current, receivedFromRepairBy: value }))}
-        />
-        <TextArea
-          label="Note"
-          value={form.receivedFromRepairNote}
-          onChange={(value) => setForm((current) => ({ ...current, receivedFromRepairNote: value }))}
-        />
-      </>
-    );
-  }
-
-  return (
-    <>
-      <Input label="Sent to customer by" value={form.sentToCustomerBy} onChange={(value) => setForm((current) => ({ ...current, sentToCustomerBy: value }))} />
-      <TextArea label="Note" value={form.sentToCustomerNote} onChange={(value) => setForm((current) => ({ ...current, sentToCustomerNote: value }))} />
-    </>
-  );
-}
-
-function actionPayload(
-  action: ActionPayload["action"],
-  form: {
-    sentToRepairBy: string;
-    sentToRepairNote: string;
-    receivedFromRepairBy: string;
-    receivedFromRepairNote: string;
-    sentToCustomerBy: string;
-    sentToCustomerNote: string;
-  },
-): ActionPayload {
-  if (action === "send-to-repair") {
-    return { action, sentToRepairBy: form.sentToRepairBy, sentToRepairNote: form.sentToRepairNote };
-  }
-  if (action === "receive-from-repair") {
-    return { action, receivedFromRepairBy: form.receivedFromRepairBy, receivedFromRepairNote: form.receivedFromRepairNote };
-  }
-  return { action, sentToCustomerBy: form.sentToCustomerBy, sentToCustomerNote: form.sentToCustomerNote };
-}
-
 function timelineActionLabel(action: string) {
   switch (action) {
     case "CREATE":
@@ -352,6 +226,8 @@ function timelineActionLabel(action: string) {
       return "Sent to Customer";
     case "UPDATE":
       return "Repair Updated";
+    case "DELETE":
+      return "Repair Deleted";
     default:
       return action;
   }

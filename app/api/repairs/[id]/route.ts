@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { getRepair, updateRepairWhileReceived } from "@/lib/mongoStore";
+import { getRepair, softDeleteRepair, updateRepairWhileReceived } from "@/lib/mongoStore";
 
 type Params = { params: Promise<{ id: string }> };
 
@@ -18,6 +18,17 @@ export async function PATCH(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const repair = await updateRepairWhileReceived(id, await request.json());
+    return NextResponse.json({ repair });
+  } catch (error) {
+    return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
+  }
+}
+
+export async function DELETE(request: NextRequest, { params }: Params) {
+  try {
+    const { id } = await params;
+    const body = await request.json().catch(() => ({}));
+    const repair = await softDeleteRepair(id, typeof body?.deleteReason === "string" ? body.deleteReason : undefined);
     return NextResponse.json({ repair });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error) }, { status: 400 });

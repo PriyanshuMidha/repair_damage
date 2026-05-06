@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { RepairBackButton } from "@/components/RepairBackButton";
+import { type RepairPhoto } from "@/lib/types";
 
 export default function EditRepairPage() {
   const router = useRouter();
@@ -11,7 +12,10 @@ export default function EditRepairPage() {
   const id = typeof params?.id === "string" ? params.id : "";
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+  const [message, setMessage] = useState("");
   const [isPending, startTransition] = useTransition();
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photos, setPhotos] = useState<RepairPhoto[]>([]);
   const [form, setForm] = useState({
     partyName: "",
     receivedFromCustomerBy: "",
@@ -44,6 +48,7 @@ export default function EditRepairPage() {
           repairNumber: r.repairNumber,
           status: r.status,
         });
+        setPhotos(Array.isArray(r.photos) ? r.photos : []);
         setLoaded(true);
       })
       .catch(() => {
@@ -54,6 +59,7 @@ export default function EditRepairPage() {
 
   function save() {
     setError("");
+    setMessage("");
     if (!form.partyName.trim()) {
       setError("Party name is required.");
       return;
@@ -94,6 +100,38 @@ export default function EditRepairPage() {
         return;
       }
       router.push(`/repairs/${id}`);
+    });
+  }
+
+  function uploadPhoto() {
+    setError("");
+    setMessage("");
+    if (!photoFile) {
+      setError("Choose a photo file first.");
+      return;
+    }
+
+    startTransition(async () => {
+      const photoData = new FormData();
+      photoData.append("photo", photoFile);
+      const response = await fetch(`/api/repairs/${id}/photos`, {
+        method: "POST",
+        body: photoData,
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error ?? "Photo upload failed.");
+        return;
+      }
+
+      setPhotoFile(null);
+      setMessage("Photo uploaded successfully.");
+
+      const repairResponse = await fetch(`/api/repairs/${id}`, { cache: "no-store" });
+      const repairData = await repairResponse.json();
+      if (repairResponse.ok && repairData.repair) {
+        setPhotos(Array.isArray(repairData.repair.photos) ? repairData.repair.photos : []);
+      }
     });
   }
 
@@ -138,7 +176,8 @@ export default function EditRepairPage() {
       <section className="hero compact-hero">
         <div>
           <div className="eyebrow">Edit Repair</div>
-          <h1>{form.repairNumber}</h1>
+          <h1 className="record-hero-title">{form.partyName || "Party Name"}</h1>
+          <p className="record-hero-subtitle">Repair ID: {form.repairNumber}</p>
         </div>
         <RepairBackButton hasUnsavedChanges />
       </section>
@@ -174,7 +213,30 @@ export default function EditRepairPage() {
           </label>
         </div>
 
+        <div className="form-section">
+          <h2>Photos</h2>
+          {photos.length === 0 ? <div className="notice">No photo attached yet.</div> : null}
+          {photos.map((photo) => (
+            <div className="notice" key={photo.id}>
+              <strong>{photo.fileName}</strong>
+              <br />
+              <img src={photo.url} alt={photo.fileName} style={{ borderRadius: 8, marginTop: 8, maxHeight: 180, maxWidth: "100%", objectFit: "contain" }} />
+            </div>
+          ))}
+          <label className="field">
+            <span>Upload Photo</span>
+            <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} />
+          </label>
+          {photoFile ? <div className="notice">Selected photo: {photoFile.name}</div> : null}
+          <div className="actions">
+            <button className="button secondary" type="button" disabled={isPending} onClick={uploadPhoto}>
+              {isPending ? "Uploading..." : "Upload Photo"}
+            </button>
+          </div>
+        </div>
+
         {error ? <div className="notice">{error}</div> : null}
+        {message ? <div className="notice">{message}</div> : null}
 
         <div className="actions">
           <button className="button" type="button" disabled={isPending} onClick={save}>

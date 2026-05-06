@@ -36,6 +36,7 @@ export type RepairPhoto = {
   repairId: string;
   fileName: string;
   url: string;
+  kind?: "product" | "proof";
   uploadedByUserId: string;
   uploadedAt: string;
 };
@@ -50,7 +51,7 @@ export type RepairReceipt = {
   lastError?: string;
 };
 
-export type RepairAuditAction = "CREATE" | "SEND_TO_REPAIR" | "RECEIVE_FROM_REPAIR" | "SEND_TO_CUSTOMER" | "UPDATE";
+export type RepairAuditAction = "CREATE" | "SEND_TO_REPAIR" | "RECEIVE_FROM_REPAIR" | "SEND_TO_CUSTOMER" | "UPDATE" | "DELETE";
 
 export type RepairAuditEntry = {
   id: string;
@@ -60,6 +61,11 @@ export type RepairAuditEntry = {
   roleLabel: string;
   personName: string;
   note?: string;
+  metadata?: {
+    sendingMedium?: string;
+    proofPhotoUrl?: string;
+    proofPhotoFileName?: string;
+  };
   createdAt: string;
 };
 
@@ -86,6 +92,10 @@ export type Repair = {
   sentToCustomerNote?: string;
   productImageDriveLink?: string;
   productImageFileName?: string;
+  isDeleted?: boolean;
+  deletedAt?: string;
+  deletedBy?: string;
+  deleteReason?: string;
   auditTimeline: RepairAuditEntry[];
   receivedByUserId?: string;
 };
@@ -127,4 +137,7 @@ export type ActionPayload = {
   receivedFromRepairNote?: string;
   sentToCustomerBy?: string;
   sentToCustomerNote?: string;
+  sentToCustomerSendingMedium?: string;
+  sentToCustomerProofPhotoUrl?: string;
+  sentToCustomerProofPhotoFileName?: string;
 };

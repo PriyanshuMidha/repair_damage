@@ -13,6 +13,7 @@ type ResponseShape = { repairs?: RepairDetail[]; error?: string };
 export default function RepairsPage() {
   const [repairs, setRepairs] = useState<RepairDetail[]>([]);
   const [error, setError] = useState("");
+  const [showDeleteNotice, setShowDeleteNotice] = useState(false);
   const [filters, setFilters] = useState({
     party: "",
     person: "",
@@ -36,6 +37,10 @@ export default function RepairsPage() {
 
   useEffect(() => {
     load();
+    if (typeof window !== "undefined") {
+      const search = new URLSearchParams(window.location.search);
+      setShowDeleteNotice(search.get("deleted") === "1");
+    }
   }, []);
 
   const exportUrl = `/api/repairs/export?${new URLSearchParams(Object.entries(filters).filter(([, value]) => value)).toString()}`;
@@ -88,6 +93,8 @@ export default function RepairsPage() {
           <Field label="Search by person name" value={filters.person} onChange={(value) => setFilters({ ...filters, person: value })} />
         </div>
 
+        {showDeleteNotice ? <div className="notice">Repair entry deleted successfully.</div> : null}
+
         {error ? <div className="notice">{error}</div> : null}
 
         {repairs.length === 0 ? (
@@ -105,9 +112,11 @@ export default function RepairsPage() {
                       </Link>
                       <StatusBadge status={repair.status} />
                     </div>
+                    <div className="record-heading-block">
+                      <div className="record-title">{repair.party.name}</div>
+                      <div className="record-subtitle">Repair ID: {repair.repairNumber}</div>
+                    </div>
                     <div>
-                      <strong>{repair.party.name}</strong>
-                      <br />
                       {repair.productDetails}
                       <br />
                       {person.label}: {person.value}
@@ -151,7 +160,12 @@ export default function RepairsPage() {
                         <td>
                           <StatusBadge status={repair.status} />
                         </td>
-                        <td>{repair.party.name}</td>
+                        <td>
+                          <div className="record-heading-block">
+                            <div className="record-title record-title-table">{repair.party.name}</div>
+                            <div className="record-subtitle">Repair ID: {repair.repairNumber}</div>
+                          </div>
+                        </td>
                         <td>{repair.productDetails}</td>
                         <td>{repair.sellingPrice}</td>
                         <td>{new Date(repair.createdAt).toLocaleString()}</td>

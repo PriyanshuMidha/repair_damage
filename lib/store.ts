@@ -63,6 +63,7 @@ export function listMasters() {
 
 export function listRepairs(filters: RepairListFilters = {}) {
   return store.repairs
+    .filter((repair) => !repair.isDeleted)
     .map(hydrateRepair)
     .filter((repair) => {
       if (filters.status && isRepairStatus(filters.status) && repair.status !== filters.status) return false;
@@ -112,7 +113,7 @@ export function listRepairs(filters: RepairListFilters = {}) {
 }
 
 export function getRepair(id: string) {
-  const repair = store.repairs.find((item) => item.id === id);
+  const repair = store.repairs.find((item) => item.id === id && !item.isDeleted);
   return repair ? hydrateRepair(repair) : undefined;
 }
 
@@ -175,7 +176,7 @@ export function updateRepairWhileReceived(id: string, input: Partial<CreateRepai
   return hydrateRepair(nextRepair);
 }
 
-export function uploadPhoto(id: string, fileName: string, url?: string) {
+export function uploadPhoto(id: string, fileName: string, url?: string, kind: "product" | "proof" = "product") {
   const repair = findRepair(id);
   const user = currentUser("staff");
   const photo: RepairPhoto = {
@@ -183,13 +184,16 @@ export function uploadPhoto(id: string, fileName: string, url?: string) {
     repairId: id,
     fileName: fileName.trim() || "repair-photo.jpg",
     url: url?.trim() || `/uploads/${encodeURIComponent(fileName.trim() || "repair-photo.jpg")}`,
+    kind,
     uploadedByUserId: user.id,
     uploadedAt: new Date().toISOString(),
   };
   store.photos.push(photo);
 
-  repair.productImageDriveLink = photo.url;
-  repair.productImageFileName = photo.fileName;
+  if (kind === "product") {
+    repair.productImageDriveLink = photo.url;
+    repair.productImageFileName = photo.fileName;
+  }
   repair.updatedAt = photo.uploadedAt;
   return photo;
 }
@@ -234,9 +238,28 @@ export function performAction(id: string, payload: ActionPayload, role: "staff" 
     repair.sentToCustomerBy = payload.sentToCustomerBy?.trim();
     repair.sentToCustomerNote = payload.sentToCustomerNote?.trim() || undefined;
     repair.auditTimeline.push(
-      buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now),
+      buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now, {
+        sendingMedium: payload.sentToCustomerSendingMedium?.trim() || undefined,
+        proofPhotoUrl: payload.sentToCustomerProofPhotoUrl?.trim() || undefined,
+        proofPhotoFileName: payload.sentToCustomerProofPhotoFileName?.trim() || undefined,
+      }),
     );
   }
+
+  return hydrateRepair(repair);
+}
+
+export function softDeleteRepair(id: string, deleteReason?: string) {
+  const repair = findRepair(id);
+  const user = currentUser("staff");
+  const now = new Date().toISOString();
+
+  repair.isDeleted = true;
+  repair.deletedAt = now;
+  repair.deletedBy = user.name;
+  repair.deleteReason = deleteReason?.trim() || undefined;
+  repair.updatedAt = now;
+  repair.auditTimeline.push(buildAuditEntry("DELETE", repair.status, repair.status, "Deleted by", user.name, repair.deleteReason, now));
 
   return hydrateRepair(repair);
 }
@@ -318,7 +341,7 @@ function validateCreateInput(input: CreateRepairInput | Repair) {
 }
 
 function findRepair(id: string) {
-  const repair = store.repairs.find((item) => item.id === id);
+  const repair = store.repairs.find((item) => item.id === id && !item.isDeleted);
   if (!repair) throw new Error("Repair not found.");
   return repair;
 }
@@ -337,6 +360,11 @@ function buildAuditEntry(
   personName: string,
   note: string | undefined,
   createdAt: string,
+  metadata?: {
+    sendingMedium?: string;
+    proofPhotoUrl?: string;
+    proofPhotoFileName?: string;
+  },
 ): RepairAuditEntry {
   return {
     id: crypto.randomUUID(),
@@ -346,6 +374,7 @@ function buildAuditEntry(
     roleLabel,
     personName,
     note: note?.trim() || undefined,
+    metadata,
     createdAt,
   };
 }

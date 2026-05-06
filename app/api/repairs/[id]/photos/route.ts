@@ -15,6 +15,7 @@ export async function POST(request: NextRequest, { params }: Params) {
     if (contentType.includes("multipart/form-data")) {
       const formData = await request.formData();
       const file = formData.get("photo");
+      const kind = formData.get("kind") === "proof" ? "proof" : "product";
       if (!(file instanceof File)) {
         throw new Error("Photo file is required.");
       }
@@ -32,12 +33,12 @@ export async function POST(request: NextRequest, { params }: Params) {
       await mkdir(uploadDir, { recursive: true });
       await writeFile(join(uploadDir, safeName), bytes);
 
-      const photo = await uploadPhoto(id, file.name, `/uploads/repairs/${id}/${safeName}`);
+      const photo = await uploadPhoto(id, file.name, `/uploads/repairs/${id}/${safeName}`, kind);
       return NextResponse.json({ photo }, { status: 201 });
     }
 
     const body = await request.json();
-    const photo = await uploadPhoto(id, body.fileName, body.url);
+    const photo = await uploadPhoto(id, body.fileName, body.url, body.kind === "proof" ? "proof" : "product");
     return NextResponse.json({ photo }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
