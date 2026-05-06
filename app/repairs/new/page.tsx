@@ -69,11 +69,12 @@ export default function NewRepairPage() {
         setError(data.error ?? "Could not create repair.");
         return;
       }
+      const repair = data.repair;
 
       if (photoFile) {
         const photoData = new FormData();
         photoData.append("photo", photoFile);
-        const photoResponse = await fetch(`/api/repairs/${data.repair.id}/photos`, {
+        const photoResponse = await fetch(`/api/repairs/${repair.id}/photos`, {
           method: "POST",
           body: photoData,
         });
@@ -83,10 +84,10 @@ export default function NewRepairPage() {
         }
       }
 
-      const nextDownloadUrl = `/api/repairs/${data.repair.id}/receipt/pdf`;
-      setCreatedId(data.repair.id);
+      const nextDownloadUrl = `/api/repairs/${repair.id}/receipt/pdf`;
+      setCreatedId(repair.id);
       setDownloadUrl(nextDownloadUrl);
-      triggerDownload(nextDownloadUrl, `${data.repair.repairNumber}.pdf`);
+      triggerDownload(nextDownloadUrl, `${repair.repairNumber}.pdf`);
       setWarning((current) => current || "Receipt download started. If it does not open automatically, use Download Receipt.");
     });
   }
@@ -124,7 +125,7 @@ export default function NewRepairPage() {
         </div>
 
         <div className="form-section">
-          <h2>Product Details</h2>
+          <h2>Product Code</h2>
           <label className="field">
             <span>Product details</span>
             <textarea className="input" value={form.productDetails} onChange={(event) => setForm({ ...form, productDetails: event.target.value })} />
@@ -135,7 +136,7 @@ export default function NewRepairPage() {
           <h2>Remark and Photo</h2>
           <div className="grid">
             <label className="field">
-              <span>Add Photo</span>
+              <span>Upload Photo to Google Drive</span>
               <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} />
             </label>
             {photoFile ? <div className="notice">Selected photo: {photoFile.name}</div> : null}

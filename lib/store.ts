@@ -176,7 +176,13 @@ export function updateRepairWhileReceived(id: string, input: Partial<CreateRepai
   return hydrateRepair(nextRepair);
 }
 
-export function uploadPhoto(id: string, fileName: string, url?: string, kind: "product" | "proof" = "product") {
+export function uploadPhoto(
+  id: string,
+  fileName: string,
+  url?: string,
+  kind: "product" | "proof" = "product",
+  options?: Pick<RepairPhoto, "previewUrl" | "driveFileId" | "linkType">,
+) {
   const repair = findRepair(id);
   const user = currentUser("staff");
   const photo: RepairPhoto = {
@@ -185,14 +191,25 @@ export function uploadPhoto(id: string, fileName: string, url?: string, kind: "p
     fileName: fileName.trim() || "repair-photo.jpg",
     url: url?.trim() || `/uploads/${encodeURIComponent(fileName.trim() || "repair-photo.jpg")}`,
     kind,
+    previewUrl: options?.previewUrl,
+    driveFileId: options?.driveFileId,
+    linkType: options?.linkType,
     uploadedByUserId: user.id,
     uploadedAt: new Date().toISOString(),
   };
   store.photos.push(photo);
 
   if (kind === "product") {
-    repair.productImageDriveLink = photo.url;
-    repair.productImageFileName = photo.fileName;
+    repair.damagePhotoDriveId = photo.driveFileId;
+    repair.damagePhotoUrl = photo.url;
+    repair.damagePhotoPreviewUrl = photo.previewUrl;
+    repair.damagePhotoFileName = photo.fileName;
+  }
+  if (kind === "proof") {
+    repair.sendingPhotoDriveId = photo.driveFileId;
+    repair.sendingPhotoUrl = photo.url;
+    repair.sendingPhotoPreviewUrl = photo.previewUrl;
+    repair.sendingPhotoFileName = photo.fileName;
   }
   repair.updatedAt = photo.uploadedAt;
   return photo;
@@ -240,10 +257,18 @@ export function performAction(id: string, payload: ActionPayload, role: "staff" 
     repair.auditTimeline.push(
       buildAuditEntry("SEND_TO_CUSTOMER", fromStatus, toStatus, "Sent to customer by", repair.sentToCustomerBy ?? user.name, repair.sentToCustomerNote, now, {
         sendingMedium: payload.sentToCustomerSendingMedium?.trim() || undefined,
+        proofPhotoDriveId: payload.sentToCustomerProofPhotoDriveId?.trim() || undefined,
         proofPhotoUrl: payload.sentToCustomerProofPhotoUrl?.trim() || undefined,
+        proofPhotoPreviewUrl: payload.sentToCustomerProofPhotoPreviewUrl?.trim() || undefined,
         proofPhotoFileName: payload.sentToCustomerProofPhotoFileName?.trim() || undefined,
       }),
     );
+  }
+
+  if (payload.action === "mark-as-gr") {
+    repair.grBy = payload.grBy?.trim();
+    repair.grNote = payload.grNote?.trim() || undefined;
+    repair.auditTimeline.push(buildAuditEntry("MARK_AS_GR", fromStatus, toStatus, "Marked as GR by", repair.grBy ?? user.name, repair.grNote, now));
   }
 
   return hydrateRepair(repair);
@@ -290,7 +315,7 @@ export function generateReceipt(id: string, userId = currentUser("staff").id) {
 
 export function repairsToCsv(filters: RepairListFilters = {}) {
   const rows = listRepairs(filters);
-  const header = ["Repair Number", "Date ID", "Status", "Party", "Product Details", "Selling Price", "Person"];
+  const header = ["Repair Number", "Date ID", "Status", "Party", "Product Code", "Selling Price", "Person"];
   const body = rows.map((repair) => [
     repair.repairNumber,
     repair.repairDateId,
@@ -362,7 +387,9 @@ function buildAuditEntry(
   createdAt: string,
   metadata?: {
     sendingMedium?: string;
+    proofPhotoDriveId?: string;
     proofPhotoUrl?: string;
+    proofPhotoPreviewUrl?: string;
     proofPhotoFileName?: string;
   },
 ): RepairAuditEntry {

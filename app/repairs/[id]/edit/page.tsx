@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useState, useTransition } from "react";
 import { RepairBackButton } from "@/components/RepairBackButton";
+import { isPreviewablePhoto } from "@/lib/drive";
 import { type RepairPhoto } from "@/lib/types";
 
 export default function EditRepairPage() {
@@ -125,7 +126,7 @@ export default function EditRepairPage() {
       }
 
       setPhotoFile(null);
-      setMessage("Photo uploaded successfully.");
+      setMessage("Photo saved successfully.");
 
       const repairResponse = await fetch(`/api/repairs/${id}`, { cache: "no-store" });
       const repairData = await repairResponse.json();
@@ -198,7 +199,7 @@ export default function EditRepairPage() {
         </div>
 
         <div className="form-section">
-          <h2>Product Details</h2>
+          <h2>Product Code</h2>
           <label className="field">
             <span>Product details</span>
             <textarea className="input" value={form.productDetails} onChange={(event) => setForm({ ...form, productDetails: event.target.value })} />
@@ -220,17 +221,32 @@ export default function EditRepairPage() {
             <div className="notice" key={photo.id}>
               <strong>{photo.fileName}</strong>
               <br />
-              <img src={photo.url} alt={photo.fileName} style={{ borderRadius: 8, marginTop: 8, maxHeight: 180, maxWidth: "100%", objectFit: "contain" }} />
+              {isPreviewablePhoto(photo) ? (
+                <img
+                  src={photo.previewUrl || photo.url}
+                  alt={photo.fileName}
+                  style={{ borderRadius: 8, marginTop: 8, maxHeight: 180, maxWidth: "100%", objectFit: "contain" }}
+                />
+              ) : (
+                <a className="button secondary" href={photo.url} target="_blank" rel="noreferrer" style={{ marginTop: 8 }}>
+                  {photo.linkType === "drive-folder" ? "Open Drive Folder" : "Open Photo Link"}
+                </a>
+              )}
+              <div className="photo-link-row">
+                <a href={photo.url} target="_blank" rel="noreferrer">
+                  Open original link
+                </a>
+              </div>
             </div>
           ))}
           <label className="field">
-            <span>Upload Photo</span>
+            <span>Upload Photo to Google Drive</span>
             <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} />
           </label>
           {photoFile ? <div className="notice">Selected photo: {photoFile.name}</div> : null}
           <div className="actions">
             <button className="button secondary" type="button" disabled={isPending} onClick={uploadPhoto}>
-              {isPending ? "Uploading..." : "Upload Photo"}
+              {isPending ? "Saving..." : "Save Photo"}
             </button>
           </div>
         </div>

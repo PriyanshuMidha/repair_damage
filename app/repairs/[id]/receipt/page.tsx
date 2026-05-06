@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { ReceiptSheet } from "@/components/ReceiptSheet";
 import { PrintButton } from "@/components/PrintButton";
 import { RepairBackButton } from "@/components/RepairBackButton";
-import { buildReceiptRows, formatDate } from "@/lib/receipt";
+import { formatDate } from "@/lib/dateTime";
+import { buildReceiptRows } from "@/lib/receipt";
 import { getRepair } from "@/lib/mongoStore";
 
 type Params = { params: Promise<{ id: string }> };

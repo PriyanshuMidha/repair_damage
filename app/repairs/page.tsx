@@ -5,6 +5,7 @@ import { useEffect, useState, useTransition } from "react";
 import { RepairBackButton } from "@/components/RepairBackButton";
 import { RepairHeroNav } from "@/components/RepairHeroNav";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatDateTime } from "@/lib/dateTime";
 import { relevantPersonLabel } from "@/lib/workflow";
 import { type RepairDetail } from "@/lib/types";
 
@@ -117,11 +118,11 @@ export default function RepairsPage() {
                       <div className="record-subtitle">Repair ID: {repair.repairNumber}</div>
                     </div>
                     <div>
-                      {repair.productDetails}
+                      Product Code: {repair.product.name || repair.productDetails}
                       <br />
                       {person.label}: {person.value}
                     </div>
-                    <small>{new Date(repair.createdAt).toLocaleString()}</small>
+                    <small>{formatDateTime(repair.createdAt)}</small>
                     <div className="actions">
                       <Link className="button" href={`/repairs/${repair.id}`}>
                         Preview
@@ -141,7 +142,7 @@ export default function RepairsPage() {
                     <th>Preview</th>
                     <th>Status</th>
                     <th>Party</th>
-                    <th>Product</th>
+                    <th>Product Code</th>
                     <th>Price</th>
                     <th>Created</th>
                     <th>Person</th>
@@ -166,9 +167,9 @@ export default function RepairsPage() {
                             <div className="record-subtitle">Repair ID: {repair.repairNumber}</div>
                           </div>
                         </td>
-                        <td>{repair.productDetails}</td>
+                        <td>{repair.product.name || repair.productDetails}</td>
                         <td>{repair.sellingPrice}</td>
-                        <td>{new Date(repair.createdAt).toLocaleString()}</td>
+                        <td>{formatDateTime(repair.createdAt)}</td>
                         <td>{person.value}</td>
                       </tr>
                     );

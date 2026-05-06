@@ -1,4 +1,5 @@
 import { relevantPersonLabel } from "./workflow";
+import { formatDate } from "./dateTime";
 import type { RepairDetail } from "./types";
 
 export function renderReceiptHtml(repair: RepairDetail) {
@@ -11,7 +12,8 @@ export function renderReceiptHtml(repair: RepairDetail) {
   <style>
     * { box-sizing: border-box; }
     body { background: #f8f5ee; color: #13211a; font-family: Georgia, serif; margin: 0; padding: 24px; }
-    .receipt { background: white; border: 1px solid #ddd4c2; margin: 0 auto; max-width: 820px; padding: 22px; }
+    .receipt-sheet { background: white; display: grid; gap: 8px; grid-template-rows: 1fr auto 1fr; margin: 0 auto; max-width: 820px; padding: 12px; }
+    .receipt { background: white; border: 1px solid #ddd4c2; margin: 0 auto; max-width: 820px; padding: 22px; width: 100%; }
     .receipt-topline { color: #365847; display: flex; font-size: 13px; font-weight: 700; justify-content: space-between; letter-spacing: 0.14em; text-transform: uppercase; }
     .receipt-heading { display: flex; gap: 24px; justify-content: space-between; margin-top: 12px; }
     h1 { font-size: 48px; line-height: 0.95; margin: 0; }
@@ -20,26 +22,36 @@ export function renderReceiptHtml(repair: RepairDetail) {
     td, th { border-bottom: 1px solid #e6dece; padding: 10px 0; text-align: left; vertical-align: top; }
     th { color: #1e5844; font-size: 14px; letter-spacing: 0.08em; text-transform: uppercase; width: 38%; }
     td { font-size: 17px; }
+    .receipt-cutline { align-items: center; color: #6a756d; display: flex; font-size: 11px; font-weight: 700; gap: 10px; justify-content: center; letter-spacing: 0.14em; text-transform: uppercase; }
+    .receipt-cutline::before, .receipt-cutline::after { border-top: 1px dashed #b7b0a2; content: ""; flex: 1 1 auto; }
   </style>
 </head>
 <body>
-  <main class="receipt">
-    <div class="receipt-topline">
-      <span>Repair Receipt</span>
-      <span>${formatDate(repair.createdAt)}</span>
-    </div>
-    <div class="receipt-heading">
-      <div>
-        <h1>${escapeHtml(repair.party.name)}</h1>
-        <p class="receipt-summary">${escapeHtml(repair.productDetails)}</p>
-      </div>
-    </div>
-    <table>
-      ${rows.map((row) => `<tr><th>${escapeHtml(row.label)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}
-    </table>
+  <main class="receipt-sheet">
+    ${renderReceiptCopy(repair, rows)}
+    <div class="receipt-cutline">Cut Here</div>
+    ${renderReceiptCopy(repair, rows)}
   </main>
 </body>
 </html>`;
+}
+
+function renderReceiptCopy(repair: RepairDetail, rows: Array<{ label: string; value: string }>) {
+  return `<section class="receipt">
+      <div class="receipt-topline">
+        <span>Repair Receipt</span>
+        <span>${formatDate(repair.createdAt)}</span>
+      </div>
+      <div class="receipt-heading">
+        <div>
+          <h1>${escapeHtml(repair.party.name)}</h1>
+          <p class="receipt-summary">${escapeHtml(repair.productDetails)}</p>
+        </div>
+      </div>
+      <table>
+        ${rows.map((row) => `<tr><th>${escapeHtml(row.label)}</th><td>${escapeHtml(row.value)}</td></tr>`).join("")}
+      </table>
+    </section>`;
 }
 
 export function buildReceiptLink(repairId: string, origin?: string) {
@@ -52,12 +64,17 @@ export function buildPdfBytes(repair: RepairDetail) {
 
   const pageWidth = 595;
   const pageHeight = 842;
-  const margin = 22;
-  const copyHeight = pageHeight - margin * 2;
+  const margin = 18;
+  const cutlineGap = 20;
+  const copyHeight = (pageHeight - margin * 2 - cutlineGap) / 2;
   const copyWidth = pageWidth - margin * 2;
 
   const commands: string[] = [];
-  drawReceiptCopy(commands, margin, margin, copyWidth, copyHeight, repair, rows);
+  const firstBottom = pageHeight - margin - copyHeight;
+  const secondBottom = margin;
+  drawReceiptCopy(commands, margin, firstBottom, copyWidth, copyHeight, repair, rows);
+  drawCutLine(commands, margin, secondBottom + copyHeight + cutlineGap / 2, copyWidth);
+  drawReceiptCopy(commands, margin, secondBottom, copyWidth, copyHeight, repair, rows);
 
   const stream = commands.join("\n");
   const objects = [
@@ -70,14 +87,6 @@ export function buildPdfBytes(repair: RepairDetail) {
   ];
   return `%PDF-1.4\n${objects.join("\n")}\ntrailer << /Root 1 0 R >>\n%%EOF`;
 }
-
-export function formatDate(value: string) {
-  return new Intl.DateTimeFormat("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
-}
-
 export function formatMoney(value: number) {
   return new Intl.NumberFormat("en-IN", {
     style: "currency",
@@ -90,7 +99,7 @@ export function buildReceiptRows(repair: RepairDetail) {
   const person = relevantPersonLabel(repair);
   return [
     { label: "Date ID", value: repair.repairDateId },
-    { label: "Product Details", value: repair.productDetails },
+    { label: "Product Code", value: repair.productDetails },
     ...(repair.productColor ? [{ label: "Color", value: repair.productColor }] : []),
     { label: person.label, value: person.value },
     { label: "Selling Price", value: formatMoney(repair.sellingPrice) },
@@ -119,23 +128,23 @@ function drawReceiptCopy(
   const top = bottom + height;
   const innerLeft = left + 12;
   const innerRight = left + width - 12;
-  let currentY = top - 14;
+  let currentY = top - 18;
 
   commands.push("0.85 0.82 0.76 RG");
   commands.push(`${left} ${bottom} ${width} ${height} re S`);
   commands.push("0.18 0.38 0.29 rg");
   commands.push(`BT /F2 8 Tf 1 0 0 1 ${innerLeft} ${currentY} Tm (${pdfText("REPAIR RECEIPT")}) Tj ET`);
-  commands.push(`BT /F2 8 Tf 1 0 0 1 ${innerRight - 95} ${currentY} Tm (${pdfText(formatDate(repair.createdAt).toUpperCase())}) Tj ET`);
+  commands.push(`BT /F2 8 Tf 1 0 0 1 ${innerRight - 82} ${currentY} Tm (${pdfText(formatDate(repair.createdAt).toUpperCase())}) Tj ET`);
 
   currentY -= 20;
   commands.push("0.07 0.13 0.1 rg");
   commands.push(`BT /F2 26 Tf 1 0 0 1 ${innerLeft} ${currentY} Tm (${pdfText(repair.party.name)}) Tj ET`);
 
-  currentY -= 16;
+  currentY -= 18;
   commands.push("0.4 0.46 0.43 rg");
   commands.push(`BT /F1 10 Tf 1 0 0 1 ${innerLeft} ${currentY} Tm (${pdfText(repair.productDetails)}) Tj ET`);
 
-  currentY -= 8;
+  currentY -= 10;
   for (const [label, value] of rows) {
     commands.push("0.9 0.87 0.8 RG");
     commands.push(`${innerLeft} ${currentY} m ${innerRight} ${currentY} l S`);
@@ -153,6 +162,17 @@ function drawReceiptCopy(
     }
     currentY -= 2;
   }
+}
+
+function drawCutLine(commands: string[], left: number, y: number, width: number) {
+  const dashStart = left;
+  const dashEnd = left + width;
+  commands.push("[5 4] 0 d");
+  commands.push("0.72 0.69 0.64 RG");
+  commands.push(`${dashStart} ${y} m ${dashEnd} ${y} l S`);
+  commands.push("[] 0 d");
+  commands.push("0.42 0.46 0.43 rg");
+  commands.push(`BT /F2 8 Tf 1 0 0 1 ${left + width / 2 - 24} ${y + 4} Tm (${pdfText("CUT HERE")}) Tj ET`);
 }
 
 function wrapPdfText(value: string, maxChars: number) {

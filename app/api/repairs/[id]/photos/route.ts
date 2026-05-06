@@ -1,7 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { uploadPhoto } from "@/lib/mongoStore";
+import { googleServiceAccountConfigError, uploadImageToDrive } from "@/lib/driveServer";
 
 type Params = { params: Promise<{ id: string }> };
 const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
@@ -11,34 +10,30 @@ export async function POST(request: NextRequest, { params }: Params) {
   try {
     const { id } = await params;
     const contentType = request.headers.get("content-type") ?? "";
-
-    if (contentType.includes("multipart/form-data")) {
-      const formData = await request.formData();
-      const file = formData.get("photo");
-      const kind = formData.get("kind") === "proof" ? "proof" : "product";
-      if (!(file instanceof File)) {
-        throw new Error("Photo file is required.");
-      }
-      if (!ALLOWED_TYPES.has(file.type)) {
-        throw new Error("Only JPG, PNG, WEBP, or GIF images are allowed.");
-      }
-      if (file.size > MAX_PHOTO_BYTES) {
-        throw new Error("Photo must be 5 MB or smaller.");
-      }
-
-      const bytes = Buffer.from(await file.arrayBuffer());
-      const extension = extensionFor(file.name, file.type);
-      const safeName = `${Date.now()}-${crypto.randomUUID()}${extension}`;
-      const uploadDir = join(process.cwd(), "public", "uploads", "repairs", id);
-      await mkdir(uploadDir, { recursive: true });
-      await writeFile(join(uploadDir, safeName), bytes);
-
-      const photo = await uploadPhoto(id, file.name, `/uploads/repairs/${id}/${safeName}`, kind);
-      return NextResponse.json({ photo }, { status: 201 });
+    if (!contentType.includes("multipart/form-data")) {
+      throw new Error("Photo upload must be sent as a file.");
     }
 
-    const body = await request.json();
-    const photo = await uploadPhoto(id, body.fileName, body.url, body.kind === "proof" ? "proof" : "product");
+    const formData = await request.formData();
+    const file = formData.get("photo");
+    const kind = formData.get("kind") === "proof" ? "proof" : "product";
+    if (!(file instanceof File)) {
+      throw new Error("Photo file is required.");
+    }
+    if (!ALLOWED_TYPES.has(file.type)) {
+      throw new Error("Only JPG, PNG, WEBP, or GIF images are allowed.");
+    }
+    if (file.size > MAX_PHOTO_BYTES) {
+      throw new Error("Photo must be 5 MB or smaller.");
+    }
+
+    const bytes = Buffer.from(await file.arrayBuffer());
+    const driveFile = await uploadImageToDrive({ fileName: file.name || `repair-photo${extensionFor(file.name, file.type)}`, mimeType: file.type, bytes });
+    const photo = await uploadPhoto(id, driveFile.fileName, driveFile.url, kind, {
+      previewUrl: driveFile.previewUrl,
+      driveFileId: driveFile.driveFileId,
+      linkType: driveFile.linkType,
+    });
     return NextResponse.json({ photo }, { status: 201 });
   } catch (error) {
     return NextResponse.json({ error: errorMessage(error) }, { status: 400 });
@@ -46,6 +41,12 @@ export async function POST(request: NextRequest, { params }: Params) {
 }
 
 function errorMessage(error: unknown) {
+  if (error instanceof Error && /GOOGLE_SERVICE_ACCOUNT_|Google service account|Google Drive folder access failed/.test(error.message)) {
+    return `${error.message} Share the Google Drive folder with the service account email before uploading.`;
+  }
+  if (!googleServiceAccountConfigError()) {
+    return error instanceof Error ? error.message : "Request failed.";
+  }
   return error instanceof Error ? error.message : "Request failed.";
 }
 

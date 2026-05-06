@@ -265,6 +265,11 @@ th {
   color: #303f9f;
 }
 
+.status.status-gr {
+  background: #f4e1b7;
+  color: #744b00;
+}
+
 .status.status-sent-to-customer {
   background: #e8e8e8;
   color: #4a4a4a;
@@ -476,6 +481,16 @@ th {
   left: 16px;
   position: fixed;
   top: 16px;
+}
+
+.photo-link-row {
+  margin-top: 8px;
+}
+
+.photo-link-row a {
+  color: var(--brand-dark);
+  font-weight: 700;
+  text-decoration: underline;
 }
 
 .reports-section-title {

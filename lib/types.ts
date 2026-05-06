@@ -2,6 +2,7 @@ export const REPAIR_STATUSES = [
   "Received",
   "Repair In Progress",
   "Repair Received",
+  "GR",
   "Sent to Customer",
 ] as const;
 
@@ -36,6 +37,9 @@ export type RepairPhoto = {
   repairId: string;
   fileName: string;
   url: string;
+  previewUrl?: string;
+  driveFileId?: string;
+  linkType?: "drive-file" | "drive-folder" | "external-image" | "external-link" | "local-file";
   kind?: "product" | "proof";
   uploadedByUserId: string;
   uploadedAt: string;
@@ -51,7 +55,7 @@ export type RepairReceipt = {
   lastError?: string;
 };
 
-export type RepairAuditAction = "CREATE" | "SEND_TO_REPAIR" | "RECEIVE_FROM_REPAIR" | "SEND_TO_CUSTOMER" | "UPDATE" | "DELETE";
+export type RepairAuditAction = "CREATE" | "SEND_TO_REPAIR" | "RECEIVE_FROM_REPAIR" | "SEND_TO_CUSTOMER" | "MARK_AS_GR" | "UPDATE" | "DELETE";
 
 export type RepairAuditEntry = {
   id: string;
@@ -63,7 +67,9 @@ export type RepairAuditEntry = {
   note?: string;
   metadata?: {
     sendingMedium?: string;
+    proofPhotoDriveId?: string;
     proofPhotoUrl?: string;
+    proofPhotoPreviewUrl?: string;
     proofPhotoFileName?: string;
   };
   createdAt: string;
@@ -86,12 +92,20 @@ export type Repair = {
   sentToRepairBy?: string;
   receivedFromRepairBy?: string;
   sentToCustomerBy?: string;
+  grBy?: string;
   initialRemark: string;
   sentToRepairNote?: string;
   receivedFromRepairNote?: string;
   sentToCustomerNote?: string;
-  productImageDriveLink?: string;
-  productImageFileName?: string;
+  grNote?: string;
+  damagePhotoDriveId?: string;
+  damagePhotoUrl?: string;
+  damagePhotoPreviewUrl?: string;
+  damagePhotoFileName?: string;
+  sendingPhotoDriveId?: string;
+  sendingPhotoUrl?: string;
+  sendingPhotoPreviewUrl?: string;
+  sendingPhotoFileName?: string;
   isDeleted?: boolean;
   deletedAt?: string;
   deletedBy?: string;
@@ -130,7 +144,7 @@ export type RepairListFilters = {
 };
 
 export type ActionPayload = {
-  action: "send-to-repair" | "receive-from-repair" | "send-to-customer";
+  action: "send-to-repair" | "receive-from-repair" | "send-to-customer" | "mark-as-gr";
   sentToRepairBy?: string;
   sentToRepairNote?: string;
   receivedFromRepairBy?: string;
@@ -138,6 +152,10 @@ export type ActionPayload = {
   sentToCustomerBy?: string;
   sentToCustomerNote?: string;
   sentToCustomerSendingMedium?: string;
+  sentToCustomerProofPhotoDriveId?: string;
   sentToCustomerProofPhotoUrl?: string;
+  sentToCustomerProofPhotoPreviewUrl?: string;
   sentToCustomerProofPhotoFileName?: string;
+  grBy?: string;
+  grNote?: string;
 };

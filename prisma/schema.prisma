@@ -61,6 +61,7 @@ model Repair {
   receivedAt            DateTime
   sentToRepairAt        DateTime?
   receivedAfterRepairAt DateTime?
+  grAt                 DateTime?
   readyToReturnAt       DateTime?
   reworkRequiredAt      DateTime?
   repairFailedAt        DateTime?
@@ -71,6 +72,7 @@ model Repair {
   receivedAfterRepairByStaffName String?
   checkedByStaffName    String?
   returnedByStaffName   String?
+  grByStaffName         String?
   returnReceivedBy      String?
   deliveryMode          String?
   courierName           String?
@@ -98,6 +100,9 @@ model RepairPhoto {
   repairId         String
   fileName         String
   url              String
+  previewUrl       String?
+  driveFileId      String?
+  linkType         String?
   uploadedByUserId String
   uploadedAt       DateTime @default(now())
   repair           Repair   @relation(fields: [repairId], references: [id])

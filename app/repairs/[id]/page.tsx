@@ -5,6 +5,8 @@ import { use, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { RepairBackButton } from "@/components/RepairBackButton";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatDateTime } from "@/lib/dateTime";
+import { isPreviewablePhoto } from "@/lib/drive";
 import { relevantPersonLabel } from "@/lib/workflow";
 import { type RepairDetail } from "@/lib/types";
 
@@ -113,7 +115,7 @@ export default function RepairDetailPage({ params }: Params) {
               <tbody>
                 <Row label="Repair ID" value={repair.repairNumber} />
                 <Row label="Party" value={repair.party.name} />
-                <Row label="Product" value={repair.product.name || repair.productDetails} />
+                <Row label="Product Code" value={repair.product.name || repair.productDetails} />
               </tbody>
             </table>
             <label className="field">
@@ -143,13 +145,13 @@ export default function RepairDetailPage({ params }: Params) {
               <Row label="Repair ID" value={repair.repairNumber} />
               <Row label="Party Name" value={repair.party.name} />
               <Row label="Staff Name" value={person.value} />
-              <Row label="Product Name" value={repair.product.name || repair.productDetails} />
-              <Row label="Product Details" value={repair.productDetails} />
+              <Row label="Product Code" value={repair.product.name || repair.productDetails} />
+              <Row label="Product Code" value={repair.productDetails} />
               {repair.productColor ? <Row label="Product Color" value={repair.productColor} /> : null}
               <Row label="Selling Price" value={String(repair.sellingPrice)} />
               <Row label="Remark" value={repair.initialRemark} />
               <Row label="Current Status" value={repair.status} />
-              <Row label="Created Date" value={new Date(repair.createdAt).toLocaleString()} />
+              <Row label="Created Date" value={formatDateTime(repair.createdAt)} />
             </tbody>
           </table>
 
@@ -164,9 +166,24 @@ export default function RepairDetailPage({ params }: Params) {
             <div className="notice" key={item.id}>
               <strong>{item.fileName}</strong>
               <br />
-              <button className="photo-thumb" type="button" onClick={() => setPreviewPhoto({ url: item.url, fileName: item.fileName })}>
-                <img src={item.url} alt={item.fileName} />
-              </button>
+              {isPreviewablePhoto(item) ? (
+                <button
+                  className="photo-thumb"
+                  type="button"
+                  onClick={() => setPreviewPhoto({ url: item.previewUrl || item.url, fileName: item.fileName })}
+                >
+                  <img src={item.previewUrl || item.url} alt={item.fileName} />
+                </button>
+              ) : (
+                <a className="button secondary" href={item.url} target="_blank" rel="noreferrer">
+                  {item.linkType === "drive-folder" ? "Open Drive Folder" : "Open Photo Link"}
+                </a>
+              )}
+              <div className="photo-link-row">
+                <a href={item.url} target="_blank" rel="noreferrer">
+                  Open original link
+                </a>
+              </div>
             </div>
           ))}
         </section>
@@ -185,7 +202,7 @@ export default function RepairDetailPage({ params }: Params) {
                 <div className="timeline-meta">
                   {item.roleLabel}: {item.personName}
                 </div>
-                <div className="timeline-meta">{new Date(item.createdAt).toLocaleString()}</div>
+                <div className="timeline-meta">{formatDateTime(item.createdAt)}</div>
                 {item.note ? <p className="timeline-note">{item.note}</p> : null}
                 {item.metadata?.sendingMedium ? <div className="timeline-meta">Medium: {item.metadata.sendingMedium}</div> : null}
                 {item.metadata?.proofPhotoUrl ? (
@@ -195,6 +212,20 @@ export default function RepairDetailPage({ params }: Params) {
                       {item.metadata.proofPhotoFileName ?? "View file"}
                     </a>
                   </div>
+                ) : null}
+                {item.metadata?.proofPhotoPreviewUrl ? (
+                  <button
+                    className="photo-thumb"
+                    type="button"
+                    onClick={() =>
+                      setPreviewPhoto({
+                        url: item.metadata?.proofPhotoPreviewUrl || item.metadata?.proofPhotoUrl || "",
+                        fileName: item.metadata?.proofPhotoFileName || "Proof photo",
+                      })
+                    }
+                  >
+                    <img src={item.metadata.proofPhotoPreviewUrl} alt={item.metadata.proofPhotoFileName ?? "Proof photo"} />
+                  </button>
                 ) : null}
               </div>
             </div>
@@ -224,6 +255,8 @@ function timelineActionLabel(action: string) {
       return "Received from Repair";
     case "SEND_TO_CUSTOMER":
       return "Sent to Customer";
+    case "MARK_AS_GR":
+      return "Marked As GR";
     case "UPDATE":
       return "Repair Updated";
     case "DELETE":

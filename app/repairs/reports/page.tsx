@@ -5,8 +5,9 @@ import { useEffect, useMemo, useState, useTransition } from "react";
 import { RepairBackButton } from "@/components/RepairBackButton";
 import { RepairHeroNav } from "@/components/RepairHeroNav";
 import { StatusBadge } from "@/components/StatusBadge";
+import { formatDate } from "@/lib/dateTime";
 import { type ActionPayload, REPAIR_STATUSES, type RepairDetail, type RepairStatus } from "@/lib/types";
-import { actionLabel, relevantPersonLabel } from "@/lib/workflow";
+import { actionLabel, relevantPersonLabel, sortedActionsForUi } from "@/lib/workflow";
 
 type ResponseShape = { repairs: RepairDetail[]; error?: string };
 
@@ -15,6 +16,7 @@ export default function RepairReportsPage() {
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
   const [activeStatus, setActiveStatus] = useState<RepairStatus | null>(null);
+  const [activeAction, setActiveAction] = useState<ActionPayload["action"] | null>(null);
   const [partySearch, setPartySearch] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [sentToCustomerProofPhoto, setSentToCustomerProofPhoto] = useState<File | null>(null);
@@ -26,6 +28,8 @@ export default function RepairReportsPage() {
     sentToCustomerBy: "",
     sentToCustomerNote: "",
     sentToCustomerSendingMedium: "",
+    grBy: "",
+    grNote: "",
   });
   const [isPending, startTransition] = useTransition();
 
@@ -52,7 +56,7 @@ export default function RepairReportsPage() {
     let openCount = 0;
     for (const repair of repairs) {
       countsByStatus[repair.status] = (countsByStatus[repair.status] ?? 0) + 1;
-      if (repair.status !== "Sent to Customer") openCount += 1;
+      if (repair.status !== "Sent to Customer" && repair.status !== "GR") openCount += 1;
     }
     return { countsByStatus, openCount };
   }, [repairs]);
@@ -81,12 +85,14 @@ export default function RepairReportsPage() {
     return repairs.filter((repair) => repair.status === activeStatus);
   }, [activeStatus, repairs]);
 
-  const currentAction = activeStatus ? actionForStatus(activeStatus) : null;
+  const availableActions = useMemo(() => (activeStatus ? sortedActionsForUi(actionsForStatus(activeStatus)) : []), [activeStatus]);
   const allVisibleSelected = filteredRepairs.length > 0 && filteredRepairs.every((repair) => selectedIds.includes(repair.id));
   const closedCount = repairs.length - openCount;
 
   function handleStatusClick(status: RepairStatus) {
+    const nextActions = sortedActionsForUi(actionsForStatus(status));
     setActiveStatus(status);
+    setActiveAction(nextActions[0] ?? null);
     setPartySearch("");
     setSelectedIds([]);
     resetForm();
@@ -96,6 +102,7 @@ export default function RepairReportsPage() {
 
   function backToSummary() {
     setActiveStatus(null);
+    setActiveAction(null);
     setPartySearch("");
     setSelectedIds([]);
     resetForm();
@@ -116,7 +123,7 @@ export default function RepairReportsPage() {
   }
 
   function submitBulkAction() {
-    if (!currentAction || selectedIds.length === 0) return;
+    if (!activeAction || selectedIds.length === 0) return;
 
     setError("");
     setMessage("");
@@ -124,8 +131,8 @@ export default function RepairReportsPage() {
     startTransition(async () => {
       const results = await Promise.allSettled(
         selectedIds.map(async (id) => {
-          let proofPhoto: { url?: string; fileName?: string } | undefined;
-          if (currentAction === "send-to-customer" && sentToCustomerProofPhoto) {
+          let proofPhoto: { driveFileId?: string; url?: string; previewUrl?: string; fileName?: string } | undefined;
+          if (activeAction === "send-to-customer" && sentToCustomerProofPhoto) {
             const photoData = new FormData();
             photoData.append("photo", sentToCustomerProofPhoto);
             photoData.append("kind", "proof");
@@ -138,12 +145,14 @@ export default function RepairReportsPage() {
               throw new Error(photoBody.error ?? `Proof photo upload failed for repair ${id}.`);
             }
             proofPhoto = {
+              driveFileId: photoBody.photo?.driveFileId,
               url: photoBody.photo?.url,
+              previewUrl: photoBody.photo?.previewUrl,
               fileName: photoBody.photo?.fileName,
             };
           }
 
-          const payload = actionPayload(currentAction, form, proofPhoto);
+          const payload = actionPayload(activeAction, form, proofPhoto);
           const response = await fetch(`/api/repairs/${id}/actions`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -180,6 +189,8 @@ export default function RepairReportsPage() {
       sentToCustomerBy: "",
       sentToCustomerNote: "",
       sentToCustomerSendingMedium: "",
+      grBy: "",
+      grNote: "",
     });
     setSentToCustomerProofPhoto(null);
   }
@@ -304,7 +315,7 @@ export default function RepairReportsPage() {
                             <strong>Staff:</strong> {person.value}
                           </div>
                           <div className="timeline-meta">
-                            <strong>Product:</strong> {repair.product.name || repair.productDetails}
+                            <strong>Product Code:</strong> {repair.product.name || repair.productDetails}
                           </div>
                           {repair.productColor ? (
                             <div className="timeline-meta">
@@ -315,7 +326,7 @@ export default function RepairReportsPage() {
                             <strong>Remark:</strong> {repair.initialRemark}
                           </div>
                           <div className="timeline-meta">
-                            <strong>Date:</strong> {new Date(repair.createdAt).toLocaleDateString()}
+                            <strong>Date:</strong> {formatDate(repair.createdAt)}
                           </div>
                         </div>
                       </div>
@@ -325,14 +336,32 @@ export default function RepairReportsPage() {
               </div>
             ) : null}
 
-            {currentAction ? (
+            {availableActions.length > 0 ? (
               <div className="card grid report-action-panel">
                 <div className="toolbar">
-                  <h3>{actionLabel(currentAction)}</h3>
+                  <h3>{activeAction ? actionLabel(activeAction) : "Choose Action"}</h3>
                   <div className="timeline-meta">{selectedRepairs.length} selected</div>
                 </div>
-                {renderActionFields(currentAction, form, setForm)}
-                {currentAction === "send-to-customer" ? (
+                {availableActions.length > 1 ? (
+                  <div className="actions">
+                    {availableActions.map((action) => (
+                      <button
+                        key={action}
+                        className={`button${activeAction === action ? "" : " secondary"}`}
+                        type="button"
+                        onClick={() => {
+                          setActiveAction(action);
+                          setError("");
+                          setMessage("");
+                        }}
+                      >
+                        {actionLabel(action)}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {activeAction ? renderActionFields(activeAction, form, setForm) : null}
+                {activeAction === "send-to-customer" ? (
                   <>
                     <Input
                       label="Medium of Sending"
@@ -352,8 +381,8 @@ export default function RepairReportsPage() {
                   </>
                 ) : null}
                 <div className="actions">
-                  <button className="button" type="button" disabled={isPending || selectedIds.length === 0} onClick={submitBulkAction}>
-                    {isPending ? "Updating..." : actionLabel(currentAction)}
+                  <button className="button" type="button" disabled={isPending || selectedIds.length === 0 || !activeAction} onClick={submitBulkAction}>
+                    {isPending ? "Updating..." : activeAction ? actionLabel(activeAction) : "Choose Action"}
                   </button>
                   <button
                     className="button secondary"
@@ -367,8 +396,8 @@ export default function RepairReportsPage() {
                   </button>
                 </div>
               </div>
-            ) : activeStatus === "Sent to Customer" ? (
-              <div className="notice">Records in Sent to Customer have no further workflow action in the current flow.</div>
+            ) : activeStatus === "Sent to Customer" || activeStatus === "GR" ? (
+              <div className="notice">Records in {activeStatus} have no further workflow action in the current flow.</div>
             ) : null}
           </section>
         )}
@@ -377,11 +406,11 @@ export default function RepairReportsPage() {
   );
 }
 
-function actionForStatus(status: RepairStatus): ActionPayload["action"] | null {
-  if (status === "Received") return "send-to-repair";
-  if (status === "Repair In Progress") return "receive-from-repair";
-  if (status === "Repair Received") return "send-to-customer";
-  return null;
+function actionsForStatus(status: RepairStatus): ActionPayload["action"][] {
+  if (status === "Received") return ["send-to-repair"];
+  if (status === "Repair In Progress") return ["receive-from-repair"];
+  if (status === "Repair Received") return ["send-to-customer", "mark-as-gr"];
+  return [];
 }
 
 function Input({ label, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) {
@@ -412,6 +441,8 @@ function renderActionFields(
     sentToCustomerBy: string;
     sentToCustomerNote: string;
     sentToCustomerSendingMedium: string;
+    grBy: string;
+    grNote: string;
   },
   setForm: React.Dispatch<
     React.SetStateAction<{
@@ -422,6 +453,8 @@ function renderActionFields(
       sentToCustomerBy: string;
       sentToCustomerNote: string;
       sentToCustomerSendingMedium: string;
+      grBy: string;
+      grNote: string;
     }>
   >,
 ) {
@@ -451,6 +484,15 @@ function renderActionFields(
     );
   }
 
+  if (action === "mark-as-gr") {
+    return (
+      <>
+        <Input label="Marked as GR by" value={form.grBy} onChange={(value) => setForm((current) => ({ ...current, grBy: value }))} />
+        <TextArea label="Note" value={form.grNote} onChange={(value) => setForm((current) => ({ ...current, grNote: value }))} />
+      </>
+    );
+  }
+
   return (
     <>
       <Input label="Sent to customer by" value={form.sentToCustomerBy} onChange={(value) => setForm((current) => ({ ...current, sentToCustomerBy: value }))} />
@@ -469,8 +511,10 @@ function actionPayload(
     sentToCustomerBy: string;
     sentToCustomerNote: string;
     sentToCustomerSendingMedium: string;
+    grBy: string;
+    grNote: string;
   },
-  proofPhoto?: { url?: string; fileName?: string },
+  proofPhoto?: { driveFileId?: string; url?: string; previewUrl?: string; fileName?: string },
 ): ActionPayload {
   if (action === "send-to-repair") {
     return { action, sentToRepairBy: form.sentToRepairBy, sentToRepairNote: form.sentToRepairNote };
@@ -478,12 +522,17 @@ function actionPayload(
   if (action === "receive-from-repair") {
     return { action, receivedFromRepairBy: form.receivedFromRepairBy, receivedFromRepairNote: form.receivedFromRepairNote };
   }
+  if (action === "mark-as-gr") {
+    return { action, grBy: form.grBy, grNote: form.grNote };
+  }
   return {
     action,
     sentToCustomerBy: form.sentToCustomerBy,
     sentToCustomerNote: form.sentToCustomerNote,
     sentToCustomerSendingMedium: form.sentToCustomerSendingMedium,
+    sentToCustomerProofPhotoDriveId: proofPhoto?.driveFileId,
     sentToCustomerProofPhotoUrl: proofPhoto?.url,
+    sentToCustomerProofPhotoPreviewUrl: proofPhoto?.previewUrl,
     sentToCustomerProofPhotoFileName: proofPhoto?.fileName,
   };
 }
