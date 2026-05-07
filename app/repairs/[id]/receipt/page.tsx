@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { NativeShareButton } from "@/components/NativeShareButton";
 import { ReceiptSheet } from "@/components/ReceiptSheet";
 import { PrintButton } from "@/components/PrintButton";
 import { RepairBackButton } from "@/components/RepairBackButton";
@@ -17,11 +18,22 @@ export default async function ReceiptPage({ params }: Params) {
 
   return (
     <>
+      <div className="mobile-only mobile-back-sticky receipt-mobile-toolbar no-print">
+        <RepairBackButton />
+      </div>
       <div className="no-print receipt-toolbar-wrap">
         <div className="toolbar receipt-toolbar">
-          <RepairBackButton />
+          <div className="desktop-only">
+            <RepairBackButton />
+          </div>
           <div className="actions">
-            <PrintButton href={`/repairs/${repair.id}/receipt/print`} />
+            <NativeShareButton
+              label="Share Receipt"
+              text={`Repair receipt for ${repair.party.name}\nReceipt: /repairs/${repair.id}/receipt\nPDF: /api/repairs/${repair.id}/receipt/pdf`}
+              title={`Receipt ${repair.repairNumber}`}
+              url={`/repairs/${repair.id}/receipt`}
+            />
+            <PrintButton label="Open Print Copy" href={`/repairs/${repair.id}/receipt/print`} />
             <a className="button secondary" href={`/api/repairs/${repair.id}/receipt/pdf`}>
               Download Receipt
             </a>

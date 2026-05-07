@@ -240,7 +240,7 @@ export default function EditRepairPage() {
             </div>
           ))}
           <label className="field">
-            <span>Upload Photo to Google Drive</span>
+            <span>Upload Photo</span>
             <input className="input" type="file" accept="image/jpeg,image/png,image/webp,image/gif" onChange={(event) => setPhotoFile(event.target.files?.[0] ?? null)} />
           </label>
           {photoFile ? <div className="notice">Selected photo: {photoFile.name}</div> : null}

@@ -3,8 +3,10 @@
 import Link from "next/link";
 import { use, useEffect, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { NativeShareButton } from "@/components/NativeShareButton";
 import { RepairBackButton } from "@/components/RepairBackButton";
 import { StatusBadge } from "@/components/StatusBadge";
+import { buildAbsoluteUrl } from "@/lib/appConfig";
 import { formatDateTime } from "@/lib/dateTime";
 import { isPreviewablePhoto } from "@/lib/drive";
 import { relevantPersonLabel } from "@/lib/workflow";
@@ -70,19 +72,35 @@ export default function RepairDetailPage({ params }: Params) {
 
   const person = relevantPersonLabel(repair);
   const canEdit = repair.status === "Received";
+  const origin = typeof window === "undefined" ? undefined : window.location.origin;
+  const repairUrl = buildAbsoluteUrl(`/repairs/${repair.id}`, origin);
+  const receiptUrl = buildAbsoluteUrl(`/repairs/${repair.id}/receipt`, origin);
 
   return (
     <main className="shell">
+      <div className="mobile-only mobile-back-sticky">
+        <RepairBackButton />
+      </div>
       <section className="hero">
         <div>
           <div className="eyebrow">Repair Preview</div>
           <h1>{repair.party.name}</h1>
-          <p>
-            {repair.repairNumber} · {repair.productDetails}
-          </p>
+          <p>{repair.repairNumber}</p>
+          <div className="detail-hero-meta">
+            <span className="detail-meta-chip">Product Code: {repair.product.name || repair.productDetails}</span>
+            <StatusBadge status={repair.status} />
+          </div>
         </div>
-        <div className="actions">
-          <RepairBackButton />
+        <div className="actions detail-hero-actions">
+          <div className="desktop-only">
+            <RepairBackButton />
+          </div>
+          <NativeShareButton
+            label="Share Repair"
+            text={`Repair ${repair.repairNumber}\nParty: ${repair.party.name}\nProduct Code: ${repair.product.name || repair.productDetails}\nReceipt: ${receiptUrl}`}
+            title={`Repair ${repair.repairNumber}`}
+            url={repairUrl}
+          />
           {canEdit ? (
             <Link className="button" href={`/repairs/${repair.id}/edit`}>
               Edit
@@ -136,16 +154,13 @@ export default function RepairDetailPage({ params }: Params) {
 
       <div className="grid two">
         <section className="card grid">
-          <div className="toolbar">
-            <h2>Repair Details</h2>
-            <StatusBadge status={repair.status} />
-          </div>
+          <h2>Repair Details</h2>
           <table>
             <tbody>
               <Row label="Repair ID" value={repair.repairNumber} />
               <Row label="Party Name" value={repair.party.name} />
               <Row label="Staff Name" value={person.value} />
-              <Row label="Product Code" value={repair.product.name || repair.productDetails} />
+              <Row label="Product Name" value={repair.product.name || repair.productDetails} />
               <Row label="Product Code" value={repair.productDetails} />
               {repair.productColor ? <Row label="Product Color" value={repair.productColor} /> : null}
               <Row label="Selling Price" value={String(repair.sellingPrice)} />

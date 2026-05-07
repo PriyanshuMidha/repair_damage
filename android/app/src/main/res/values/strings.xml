@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Repair Control Room</string>
+    <string name="title_activity_main">Repair Control Room</string>
+    <string name="package_name">com.plazergarments.repairapp</string>
+    <string name="custom_url_scheme">com.plazergarments.repairapp</string>
+</resources>
