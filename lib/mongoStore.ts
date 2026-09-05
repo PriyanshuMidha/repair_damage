@@ -445,6 +445,8 @@ async function ensureSeeded() {
     await data.insertMany(memoryStore.store.products.map((product) => ({ _id: `product:${product.id}`, kind: "product" as const, ...product })));
   }
 
+  await data.deleteMany({ kind: "user", username: { $exists: false } });
+
   if ((await data.countDocuments({ kind: "user" })) === 0) {
     const users = await seedAuthUsers();
     await data.insertMany(users.map((user) => ({ _id: `user:${user.id}`, kind: "user" as const, ...user })));

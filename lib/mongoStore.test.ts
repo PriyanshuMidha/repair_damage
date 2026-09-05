@@ -138,4 +138,22 @@ describe("auth", () => {
       expect(user).not.toHaveProperty("username");
     }
   });
+
+  it("recovers when legacy user docs without a username already exist (pre-migration data)", async () => {
+    const { dataCollection } = await import("./mongodb");
+    const data = await dataCollection<{ _id: string; [key: string]: unknown }>();
+    await data.insertMany([
+      { _id: "user:legacy-staff", kind: "user", id: "legacy-staff", name: "Counter Staff", role: "staff" },
+      { _id: "user:legacy-admin", kind: "user", id: "legacy-admin", name: "Admin User", role: "admin" },
+    ]);
+
+    await freshStore();
+    const { verifyLogin } = await import("./auth");
+
+    const validAdmin = await verifyLogin("admin", "admin123");
+    expect(validAdmin?.role).toBe("admin");
+
+    const legacyGone = await data.findOne({ id: "legacy-admin" });
+    expect(legacyGone).toBeNull();
+  });
 });
