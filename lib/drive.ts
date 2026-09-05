@@ -1,10 +1,11 @@
-export type StoredPhotoLinkType = "drive-file" | "drive-folder" | "external-image" | "external-link" | "local-file";
+export type StoredPhotoLinkType = "drive-file" | "drive-folder" | "external-image" | "external-link" | "local-file" | "r2-object";
 
 export type NormalizedPhotoLink = {
   fileName: string;
   url: string;
   previewUrl?: string;
   driveFileId?: string;
+  storageKey?: string;
   linkType: StoredPhotoLinkType;
 };
 

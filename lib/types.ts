@@ -32,6 +32,12 @@ export type User = {
   role: Role;
 };
 
+export type AuthUser = User & {
+  username: string;
+  passwordHash?: string;
+  password?: string;
+};
+
 export type RepairPhoto = {
   id: string;
   repairId: string;
@@ -39,7 +45,8 @@ export type RepairPhoto = {
   url: string;
   previewUrl?: string;
   driveFileId?: string;
-  linkType?: "drive-file" | "drive-folder" | "external-image" | "external-link" | "local-file";
+  linkType?: "drive-file" | "drive-folder" | "external-image" | "external-link" | "local-file" | "r2-object";
+  storageKey?: string;
   kind?: "product" | "proof";
   uploadedByUserId: string;
   uploadedAt: string;

@@ -1,8 +1,17 @@
-export const AUTH_COOKIE_NAME = "repair_app_session";
-export const AUTH_SESSION_VALUE = "authenticated";
-export const LOGIN_USERNAME = "admin";
-export const LOGIN_PASSWORD = "Plazer@123";
+import bcrypt from "bcryptjs";
+import { findAuthUserByUsername } from "./mongoStore";
 
-export function isValidLogin(username: string, password: string) {
-  return username === LOGIN_USERNAME && password === LOGIN_PASSWORD;
+export { AUTH_COOKIE_NAME } from "./session";
+
+export async function verifyLogin(username: string, password: string) {
+  const user = await findAuthUserByUsername(username);
+  if (!user) return null;
+
+  const isValid = user.passwordHash
+    ? await bcrypt.compare(password, user.passwordHash)
+    : user.password === password;
+
+  if (!isValid) return null;
+
+  return { id: user.id, name: user.name, role: user.role };
 }

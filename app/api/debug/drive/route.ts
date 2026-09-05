@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
+import { startApiTimer } from "@/lib/apiTiming";
 import { debugDriveConnection } from "@/lib/driveServer";
 
 export async function GET() {
+  const timer = startApiTimer("GET /api/debug/drive");
   try {
     const result = await debugDriveConnection();
+    timer.logSuccess();
     return NextResponse.json(result);
   } catch (error) {
+    timer.logError(error);
     return NextResponse.json(
       {
         env: {

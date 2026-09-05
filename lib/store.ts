@@ -2,6 +2,7 @@ import { assertValidAction, isRepairStatus, nextStatusForAction } from "./workfl
 import { buildPdfBytes, renderReceiptHtml } from "./receipt";
 import type {
   ActionPayload,
+  AuthUser,
   CreateRepairInput,
   Party,
   Product,
@@ -13,13 +14,12 @@ import type {
   RepairPhoto,
   RepairReceipt,
   RepairStatus,
-  User,
 } from "./types";
 
 type DataStore = {
   parties: Party[];
   products: Product[];
-  users: User[];
+  users: AuthUser[];
   repairs: Repair[];
   photos: RepairPhoto[];
   receipts: RepairReceipt[];
@@ -41,8 +41,20 @@ export const store: DataStore =
       { id: "product-3", code: "PRD-3307", name: "Copper Bottle Set", color: "Copper", saleRate: 1450, purchaseRate: 880 },
     ],
     users: [
-      { id: "user-staff", name: "Counter Staff", role: "staff" },
-      { id: "user-admin", name: "Admin User", role: "admin" },
+      {
+        id: "user-staff",
+        name: "Counter Staff",
+        role: "staff",
+        username: process.env.STAFF_USERNAME?.trim() || "staff",
+        password: process.env.STAFF_PASSWORD?.trim() || "staff123",
+      },
+      {
+        id: "user-admin",
+        name: "Admin User",
+        role: "admin",
+        username: process.env.ADMIN_USERNAME?.trim() || "admin",
+        password: process.env.ADMIN_PASSWORD?.trim() || "admin123",
+      },
     ],
     repairs: [],
     photos: [],
@@ -53,11 +65,15 @@ export function currentUser(role: "staff" | "admin" = "admin") {
   return store.users.find((user) => user.role === role) ?? store.users[0];
 }
 
+export function findAuthUserByUsername(username: string) {
+  return store.users.find((user) => user.username === username);
+}
+
 export function listMasters() {
   return {
     parties: store.parties,
     products: store.products,
-    users: store.users,
+    users: store.users.map(({ id, name, role }) => ({ id, name, role })),
   };
 }
 
@@ -181,7 +197,7 @@ export function uploadPhoto(
   fileName: string,
   url?: string,
   kind: "product" | "proof" = "product",
-  options?: Pick<RepairPhoto, "previewUrl" | "driveFileId" | "linkType">,
+  options?: Pick<RepairPhoto, "previewUrl" | "driveFileId" | "linkType" | "storageKey">,
 ) {
   const repair = findRepair(id);
   const user = currentUser("staff");
@@ -194,6 +210,7 @@ export function uploadPhoto(
     previewUrl: options?.previewUrl,
     driveFileId: options?.driveFileId,
     linkType: options?.linkType,
+    storageKey: options?.storageKey,
     uploadedByUserId: user.id,
     uploadedAt: new Date().toISOString(),
   };
@@ -213,6 +230,16 @@ export function uploadPhoto(
   }
   repair.updatedAt = photo.uploadedAt;
   return photo;
+}
+
+export function deletePhoto(id: string, photoId: string) {
+  const repair = findRepair(id);
+  const photo = store.photos.find((item) => item.id === photoId && item.repairId === id);
+  if (!photo) throw new Error("Photo not found.");
+  store.photos = store.photos.filter((item) => item.id !== photoId);
+  clearRepairPhotoReference(repair, photo);
+  repair.updatedAt = new Date().toISOString();
+  return hydrateRepair(repair);
 }
 
 export function performAction(id: string, payload: ActionPayload, role: "staff" | "admin" = "staff") {
@@ -343,7 +370,8 @@ function hydrateRepair(repair: Repair): RepairDetail {
     saleRate: repair.sellingPrice,
     purchaseRate: 0,
   };
-  const receivedBy = repair.receivedByUserId ? store.users.find((item) => item.id === repair.receivedByUserId) : undefined;
+  const receivedByUser = repair.receivedByUserId ? store.users.find((item) => item.id === repair.receivedByUserId) : undefined;
+  const receivedBy = receivedByUser ? { id: receivedByUser.id, name: receivedByUser.name, role: receivedByUser.role } : undefined;
 
   return {
     ...repair,
@@ -363,6 +391,21 @@ function validateCreateInput(input: CreateRepairInput | Repair) {
   if (!input.receivedFromCustomerBy?.trim()) throw new Error("Received from customer by is required.");
   const sellingPrice = Number(input.sellingPrice);
   if (!Number.isFinite(sellingPrice)) throw new Error("Selling price is required.");
+}
+
+function clearRepairPhotoReference(repair: Repair, photo: RepairPhoto) {
+  if (repair.damagePhotoUrl === photo.url || repair.damagePhotoDriveId === photo.driveFileId) {
+    repair.damagePhotoDriveId = undefined;
+    repair.damagePhotoUrl = undefined;
+    repair.damagePhotoPreviewUrl = undefined;
+    repair.damagePhotoFileName = undefined;
+  }
+  if (repair.sendingPhotoUrl === photo.url || repair.sendingPhotoDriveId === photo.driveFileId) {
+    repair.sendingPhotoDriveId = undefined;
+    repair.sendingPhotoUrl = undefined;
+    repair.sendingPhotoPreviewUrl = undefined;
+    repair.sendingPhotoFileName = undefined;
+  }
 }
 
 function findRepair(id: string) {

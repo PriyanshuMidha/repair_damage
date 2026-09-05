@@ -1,17 +1,30 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { AUTH_COOKIE_NAME, AUTH_SESSION_VALUE } from "@/lib/auth";
+import { AUTH_COOKIE_NAME, verifySession } from "@/lib/session";
 
-function isAuthenticated(request: NextRequest) {
-  return request.cookies.get(AUTH_COOKIE_NAME)?.value === AUTH_SESSION_VALUE;
+async function isAuthenticated(request: NextRequest) {
+  const token = request.cookies.get(AUTH_COOKIE_NAME)?.value;
+  return (await verifySession(token)) !== null;
 }
 
 function loginUrl(request: NextRequest) {
   return new URL("/login", request.url);
 }
 
-export function proxy(request: NextRequest) {
+const MUTATING_METHODS = new Set(["POST", "PATCH", "PUT", "DELETE"]);
+
+function isSameOrigin(request: NextRequest) {
+  const origin = request.headers.get("origin") ?? request.headers.get("referer");
+  if (!origin) return false;
+  try {
+    return new URL(origin).host === request.nextUrl.host;
+  } catch {
+    return false;
+  }
+}
+
+export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
-  const authenticated = isAuthenticated(request);
+  const authenticated = await isAuthenticated(request);
 
   if (pathname === "/login") {
     if (authenticated) {
@@ -29,6 +42,10 @@ export function proxy(request: NextRequest) {
 
   if (!authenticated && isProtectedApi) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  if (isProtectedApi && MUTATING_METHODS.has(request.method) && !isSameOrigin(request)) {
+    return NextResponse.json({ error: "Cross-origin request rejected." }, { status: 403 });
   }
 
   return NextResponse.next();

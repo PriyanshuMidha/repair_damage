@@ -11,6 +11,8 @@ import { type RepairDetail } from "@/lib/types";
 
 type ResponseShape = { repairs?: RepairDetail[]; error?: string };
 
+const inFlightRepairListRequests = new Map<string, Promise<ResponseShape>>();
+
 export default function RepairsPage() {
   const [repairs, setRepairs] = useState<RepairDetail[]>([]);
   const [error, setError] = useState("");
@@ -23,11 +25,11 @@ export default function RepairsPage() {
 
   function load(nextFilters = filters) {
     const search = new URLSearchParams(Object.entries(nextFilters).filter(([, value]) => value));
+    const url = `/api/repairs?${search.toString()}`;
     startTransition(async () => {
       setError("");
-      const response = await fetch(`/api/repairs?${search.toString()}`, { cache: "no-store" });
-      const data = (await response.json()) as ResponseShape;
-      if (!response.ok) {
+      const data = await fetchRepairList(url);
+      if (data.error) {
         setRepairs([]);
         setError(data.error ?? "Could not load repairs.");
         return;
@@ -182,6 +184,26 @@ export default function RepairsPage() {
       </section>
     </main>
   );
+}
+
+async function fetchRepairList(url: string) {
+  const existing = inFlightRepairListRequests.get(url);
+  if (existing) return existing;
+
+  const request = fetch(url, { cache: "no-store" })
+    .then(async (response) => {
+      const data = (await response.json()) as ResponseShape;
+      if (!response.ok) {
+        return { error: data.error ?? "Could not load repairs." };
+      }
+      return data;
+    })
+    .finally(() => {
+      inFlightRepairListRequests.delete(url);
+    });
+
+  inFlightRepairListRequests.set(url, request);
+  return request;
 }
 
 function Field({

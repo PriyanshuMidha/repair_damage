@@ -3,3 +3,6 @@ node_modules/
 .env*.local
 public/uploads/
 tsconfig.tsbuildinfo
+.vitest/
+/AGENTS.md
+/CLAUDE.md

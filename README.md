@@ -12,7 +12,7 @@ Copy `.env.example` to `.env.local` and set:
 - `CAPACITOR_SERVER_URL=https://your-deployed-repair-app.com`
 - `STORAGE_MODE=auto`
 
-Keep MongoDB and Google Drive secrets on the backend only. Do not place them in the APK.
+Keep MongoDB, Cloudinary, and Google Drive secrets on the backend only. Do not place them in the APK.
 
 ### Android setup
 
@@ -25,9 +25,34 @@ Keep MongoDB and Google Drive secrets on the backend only. Do not place them in 
 
 ### Photo storage
 
-- `STORAGE_MODE=auto` tries Google Drive first, then falls back to local file storage under `public/uploads`
+- `STORAGE_MODE=auto` tries Cloudflare R2 when configured, then Cloudinary, then Google Drive, then local file storage under `public/uploads`
 - `STORAGE_MODE=local` always stores locally
+- `STORAGE_MODE=r2` requires Cloudflare R2 to succeed
+- `STORAGE_MODE=cloudinary` requires Cloudinary to succeed
 - `STORAGE_MODE=drive` requires Google Drive to succeed
+
+For Cloudflare R2, create a free R2 bucket and set:
+
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME`
+- `R2_PUBLIC_BASE_URL`
+- `R2_UPLOAD_LIMIT_GB=9.5`
+- `R2_USAGE_PREFIX=repairs/`
+
+The app blocks new R2 uploads when stored repair photos reach `R2_UPLOAD_LIMIT_GB`. The default is `9.5`, leaving a buffer below R2's 10 GB free storage allowance.
+
+R2 photos uploaded by the app can be deleted from the repair edit screen. Deleting an R2 photo removes the object from the R2 bucket and removes the app photo record, so storage usage drops after the next usage check.
+
+Photo deletion requires `PHOTO_DELETE_PASSWORD`. The default is `Priyanshu`, but production should set this in the server environment.
+
+For Cloudinary, create a free account and set:
+
+- `CLOUDINARY_CLOUD_NAME`
+- `CLOUDINARY_API_KEY`
+- `CLOUDINARY_API_SECRET`
+- `CLOUDINARY_FOLDER=repair-app/repairs`
 
 ### Mobile receipt behavior
 

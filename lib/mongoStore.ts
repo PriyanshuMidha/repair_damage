@@ -1,9 +1,12 @@
+import bcrypt from "bcryptjs";
 import { dataCollection, isMongoConfigured, mongoConfigError, partyCollection } from "./mongodb";
 import * as memoryStore from "./store";
 import { buildPdfBytes, renderReceiptHtml } from "./receipt";
+import { deleteImageFromR2 } from "./r2Server";
 import { assertValidAction, isRepairStatus, nextStatusForAction } from "./workflow";
 import type {
   ActionPayload,
+  AuthUser,
   CreateRepairInput,
   Party,
   Product,
@@ -22,36 +25,52 @@ type DataDoc = { _id?: string; [key: string]: unknown };
 type PartyDoc = { _id: string } & Party;
 
 const seeded = { done: false };
+let mastersCache: Awaited<ReturnType<typeof readMasters>> | undefined;
 
 export async function currentUser(role: "staff" | "admin" = "admin") {
+  if (shouldUseMemoryStore()) return memoryStore.currentUser(role);
   await ensureMongoReady();
   await ensureSeeded();
   const data = await dataCollection<DataDoc>();
   const user = await data.findOne({ kind: "user", role });
-  return user ? stripKind<User>(user) : memoryStore.currentUser(role);
+  return user ? toPublicUser(user) : toPublicUser(memoryStore.currentUser(role));
 }
 
 export async function listMasters() {
+  if (shouldUseMemoryStore()) return memoryStore.listMasters();
   await ensureMongoReady();
   await ensureSeeded();
+  mastersCache ??= await readMasters();
+  return mastersCache;
+}
+
+async function readMasters() {
   const parties = await partyCollection<PartyDoc>();
   const data = await dataCollection<DataDoc>();
 
   return {
     parties: (await parties.find().toArray()).map(stripId),
     products: (await data.find({ kind: "product" }).toArray()).map((item) => stripKind<Product>(item)),
-    users: (await data.find({ kind: "user" }).toArray()).map((item) => stripKind<User>(item)),
+    users: (await data.find({ kind: "user" }).toArray()).map((item) => toPublicUser(item)),
   };
 }
 
 export async function listRepairs(filters: RepairListFilters = {}) {
+  if (shouldUseMemoryStore()) return memoryStore.listRepairs(filters);
   await ensureMongoReady();
   await ensureSeeded();
-  const data = await dataCollection<DataDoc>();
-  const repairs = (await data.find({ kind: "repair", $or: [{ isDeleted: { $exists: false } }, { isDeleted: false }] }).toArray()).map((item) =>
-    stripKind<Repair>(item),
-  );
-  const hydrated = await Promise.all(repairs.map(hydrateRepair));
+
+  let hydrated: RepairDetail[];
+  try {
+    const data = await dataCollection<DataDoc>();
+    const repairs = (await data.find({ kind: "repair", $or: [{ isDeleted: { $exists: false } }, { isDeleted: false }] }).toArray()).map((item) =>
+      stripKind<Repair>(item),
+    );
+    hydrated = await hydrateRepairsForList(repairs);
+  } catch (error) {
+    console.error("[repair-app] Failed to list repairs.", error);
+    throw new Error("Could not load repairs from MongoDB.");
+  }
 
   return hydrated
     .filter((repair) => {
@@ -102,22 +121,30 @@ export async function listRepairs(filters: RepairListFilters = {}) {
 }
 
 export async function getRepair(id: string) {
+  if (shouldUseMemoryStore()) return memoryStore.getRepair(id);
   await ensureMongoReady();
   await ensureSeeded();
-  const repair = await findRepair(id);
-  return repair ? hydrateRepair(repair) : undefined;
+  try {
+    const repair = await findRepair(id);
+    return repair ? await hydrateRepair(repair) : undefined;
+  } catch (error) {
+    console.error(`[repair-app] Failed to load repair ${id}.`, error);
+    throw new Error("Could not load repair from MongoDB.");
+  }
 }
 
 export async function createRepair(input: CreateRepairInput) {
+  if (shouldUseMemoryStore()) return memoryStore.createRepair(input);
   await ensureMongoReady();
   await ensureSeeded();
   validateCreateInput(input);
 
   const now = new Date().toISOString();
   const user = await currentUser("staff");
+  const repairPrefix = repairNumberPrefix(input.partyName, input.productName ?? input.productDetails);
   const repair: Repair = {
     id: crypto.randomUUID(),
-    repairNumber: await nextRepairNumber(input.partyName, input.productName ?? input.productDetails),
+    repairNumber: randomRepairNumber(repairPrefix),
     repairDateId: buildRepairDateId(now),
     partyId: input.partyId,
     partyName: input.partyName.trim(),
@@ -136,18 +163,31 @@ export async function createRepair(input: CreateRepairInput) {
     receivedByUserId: user.id,
   };
 
-  try {
-    const data = await dataCollection<DataDoc>();
-    await data.insertOne({ _id: `repair:${repair.id}`, kind: "repair", ...repair });
-    await generateReceipt(repair.id, user.id);
-    return hydrateRepair(repair);
-  } catch (error) {
-    console.error("[repair-app] Failed to create repair.", error);
-    throw new Error("Could not save repair to MongoDB.");
+  const data = await dataCollection<DataDoc>();
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    try {
+      await data.insertOne({ _id: `repair:${repair.id}`, kind: "repair", ...repair });
+      const detail = await hydrateRepair(repair);
+      await generateReceiptForRepair(detail, user.id);
+      return detail;
+    } catch (error) {
+      if (isDuplicateKeyError(error) && attempt < 9) {
+        repair.repairNumber = randomRepairNumber(repairPrefix);
+        continue;
+      }
+      console.error("[repair-app] Failed to create repair.", error);
+      throw new Error("Could not save repair to MongoDB.");
+    }
   }
+  throw new Error("Could not generate a unique repair number. Try again.");
+}
+
+function isDuplicateKeyError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && "code" in error && (error as { code?: number }).code === 11000;
 }
 
 export async function updateRepairWhileReceived(id: string, input: Partial<CreateRepairInput>) {
+  if (shouldUseMemoryStore()) return memoryStore.updateRepairWhileReceived(id, input);
   await ensureMongoReady();
   const repair = await requireRepair(id);
   if (repair.status !== "Received") throw new Error("Only repairs in Received status can be edited.");
@@ -185,8 +225,9 @@ export async function uploadPhoto(
   fileName: string,
   url?: string,
   kind: "product" | "proof" = "product",
-  options?: Pick<RepairPhoto, "previewUrl" | "driveFileId" | "linkType">,
+  options?: Pick<RepairPhoto, "previewUrl" | "driveFileId" | "linkType" | "storageKey">,
 ) {
+  if (shouldUseMemoryStore()) return memoryStore.uploadPhoto(id, fileName, url, kind, options);
   await ensureMongoReady();
   const repair = await requireRepair(id);
   const user = await currentUser("staff");
@@ -199,6 +240,7 @@ export async function uploadPhoto(
     previewUrl: options?.previewUrl,
     driveFileId: options?.driveFileId,
     linkType: options?.linkType,
+    storageKey: options?.storageKey,
     uploadedByUserId: user.id,
     uploadedAt: new Date().toISOString(),
   };
@@ -223,7 +265,28 @@ export async function uploadPhoto(
   return photo;
 }
 
+export async function deletePhoto(id: string, photoId: string) {
+  if (shouldUseMemoryStore()) return memoryStore.deletePhoto(id, photoId);
+  await ensureMongoReady();
+  const repair = await requireRepair(id);
+  const data = await dataCollection<DataDoc>();
+  const photoDoc = await data.findOne({ kind: "photo", id: photoId, repairId: id });
+  if (!photoDoc) throw new Error("Photo not found.");
+
+  const photo = stripKind<RepairPhoto>(photoDoc);
+  if (photo.linkType === "r2-object" && photo.storageKey) {
+    await deleteImageFromR2(photo.storageKey);
+  }
+
+  await data.deleteOne({ kind: "photo", id: photoId, repairId: id });
+  clearRepairPhotoReference(repair, photo);
+  repair.updatedAt = new Date().toISOString();
+  await saveRepair(repair);
+  return hydrateRepair(repair);
+}
+
 export async function performAction(id: string, payload: ActionPayload, role: "staff" | "admin" = "staff") {
+  if (shouldUseMemoryStore()) return memoryStore.performAction(id, payload, role);
   await ensureMongoReady();
   const repair = await requireRepair(id);
   const user = await currentUser(role);
@@ -290,6 +353,7 @@ export async function performAction(id: string, payload: ActionPayload, role: "s
 }
 
 export async function softDeleteRepair(id: string, deleteReason?: string) {
+  if (shouldUseMemoryStore()) return memoryStore.softDeleteRepair(id, deleteReason);
   await ensureMongoReady();
   const repair = await requireRepair(id);
   const user = await currentUser("staff");
@@ -312,16 +376,20 @@ export async function softDeleteRepair(id: string, deleteReason?: string) {
 }
 
 export async function generateReceipt(id: string, userId?: string) {
+  if (shouldUseMemoryStore()) return memoryStore.generateReceipt(id, userId);
   await ensureMongoReady();
   const repair = await getRepair(id);
   if (!repair) throw new Error("Repair not found.");
   const user = userId ?? (await currentUser("staff")).id;
+  return generateReceiptForRepair(repair, user);
+}
 
+async function generateReceiptForRepair(repair: RepairDetail, user: string) {
   const receipt: RepairReceipt = {
     id: crypto.randomUUID(),
-    repairId: id,
-    htmlPath: `/repairs/${id}/receipt`,
-    pdfPath: `/api/repairs/${id}/receipt/pdf`,
+    repairId: repair.id,
+    htmlPath: `/repairs/${repair.id}/receipt`,
+    pdfPath: `/api/repairs/${repair.id}/receipt/pdf`,
     generatedAt: new Date().toISOString(),
     generatedByUserId: user,
   };
@@ -339,6 +407,7 @@ export async function generateReceipt(id: string, userId?: string) {
 }
 
 export async function repairsToCsv(filters: RepairListFilters = {}) {
+  if (shouldUseMemoryStore()) return memoryStore.repairsToCsv(filters);
   const rows = await listRepairs(filters);
   const header = ["Repair Number", "Date ID", "Status", "Party", "Product Code", "Selling Price", "Person"];
   const body = rows.map((repair) => [
@@ -355,8 +424,12 @@ export async function repairsToCsv(filters: RepairListFilters = {}) {
 
 async function ensureMongoReady() {
   if (!isMongoConfigured()) {
-    throw new Error(`${mongoConfigError()} Repair APIs will not use the in-memory demo store anymore.`);
+    throw new Error(`${mongoConfigError()} Add MONGODB_URI to the server environment.`);
   }
+}
+
+function shouldUseMemoryStore() {
+  return !isMongoConfigured() && process.env.NODE_ENV !== "production";
 }
 
 async function ensureSeeded() {
@@ -373,15 +446,53 @@ async function ensureSeeded() {
   }
 
   if ((await data.countDocuments({ kind: "user" })) === 0) {
-    await data.insertMany(memoryStore.store.users.map((user) => ({ _id: `user:${user.id}`, kind: "user" as const, ...user })));
+    const users = await seedAuthUsers();
+    await data.insertMany(users.map((user) => ({ _id: `user:${user.id}`, kind: "user" as const, ...user })));
   }
 
   await data.createIndex({ kind: 1, id: 1 });
   await data.createIndex({ kind: 1, repairId: 1 });
   await data.createIndex({ kind: 1, status: 1 });
   await data.createIndex({ kind: 1, createdAt: 1 });
+  await data.createIndex(
+    { repairNumber: 1 },
+    { unique: true, partialFilterExpression: { kind: "repair" } },
+  );
+  await data.createIndex(
+    { username: 1 },
+    { unique: true, partialFilterExpression: { kind: "user" } },
+  );
   await parties.createIndex({ name: 1 });
   seeded.done = true;
+}
+
+function seedAuthUsers() {
+  const isProd = process.env.NODE_ENV === "production";
+  const adminPassword = process.env.ADMIN_PASSWORD?.trim() || (isProd ? undefined : "admin123");
+  const staffPassword = process.env.STAFF_PASSWORD?.trim() || (isProd ? undefined : "staff123");
+
+  if (!adminPassword || !staffPassword) {
+    throw new Error("ADMIN_PASSWORD and STAFF_PASSWORD must be set in the production server environment.");
+  }
+
+  return Promise.all([
+    hashSeedUser({ id: "user-admin", name: "Admin User", role: "admin", username: process.env.ADMIN_USERNAME?.trim() || "admin", password: adminPassword }),
+    hashSeedUser({ id: "user-staff", name: "Counter Staff", role: "staff", username: process.env.STAFF_USERNAME?.trim() || "staff", password: staffPassword }),
+  ]);
+}
+
+async function hashSeedUser(input: { id: string; name: string; role: User["role"]; username: string; password: string }) {
+  const passwordHash = await bcrypt.hash(input.password, 12);
+  return { id: input.id, name: input.name, role: input.role, username: input.username, passwordHash };
+}
+
+export async function findAuthUserByUsername(username: string): Promise<AuthUser | undefined> {
+  if (shouldUseMemoryStore()) return memoryStore.findAuthUserByUsername(username);
+  await ensureMongoReady();
+  await ensureSeeded();
+  const data = await dataCollection<DataDoc>();
+  const user = await data.findOne({ kind: "user", username });
+  return user ? stripKind<AuthUser>(user) : undefined;
 }
 
 async function hydrateRepair(repair: Repair): Promise<RepairDetail> {
@@ -416,11 +527,58 @@ async function hydrateRepair(repair: Repair): Promise<RepairDetail> {
     ...repair,
     party: safeParty,
     product: safeProduct,
-    receivedBy: receivedBy ? stripKind<User>(receivedBy) : undefined,
+    receivedBy: receivedBy ? toPublicUser(receivedBy) : undefined,
     photos: photos.map((item) => stripKind<RepairPhoto>(item)).sort((a, b) => a.uploadedAt.localeCompare(b.uploadedAt)),
     receipts: receipts.map((item) => stripKind<RepairReceipt>(item)),
     auditTimeline: [...repair.auditTimeline].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
   };
+}
+
+async function hydrateRepairsForList(repairs: Repair[]): Promise<RepairDetail[]> {
+  if (repairs.length === 0) return [];
+
+  const parties = await partyCollection<PartyDoc>();
+  const data = await dataCollection<DataDoc>();
+  const partyIds = [...new Set(repairs.map((repair) => repair.partyId).filter((id): id is string => Boolean(id)))];
+  const userIds = [...new Set(repairs.map((repair) => repair.receivedByUserId).filter((id): id is string => Boolean(id)))];
+
+  const [partyDocs, userDocs] = await Promise.all([
+    partyIds.length ? parties.find({ _id: { $in: partyIds } }).toArray() : Promise.resolve([]),
+    userIds.length ? data.find({ kind: "user", id: { $in: userIds } }).toArray() : Promise.resolve([]),
+  ]);
+
+  const partiesById = new Map(partyDocs.map((party) => [party._id, stripId(party) as Party]));
+  const usersById = new Map(userDocs.map((user) => [String(user.id), toPublicUser(user)]));
+
+  return repairs.map((repair) => {
+    const safeParty: Party = repair.partyId && partiesById.has(repair.partyId)
+      ? partiesById.get(repair.partyId)!
+      : {
+          id: repair.partyId ?? `manual:${repair.id}`,
+          name: repair.partyName,
+          phone: "",
+          type: "Customer",
+        };
+
+    const safeProduct: Product = {
+      id: `manual:${repair.id}`,
+      code: "",
+      name: repair.productName || repair.productDetails,
+      color: repair.productColor ?? "",
+      saleRate: repair.sellingPrice,
+      purchaseRate: 0,
+    };
+
+    return {
+      ...repair,
+      party: safeParty,
+      product: safeProduct,
+      receivedBy: repair.receivedByUserId ? usersById.get(repair.receivedByUserId) : undefined,
+      photos: [],
+      receipts: [],
+      auditTimeline: [...repair.auditTimeline].sort((a, b) => a.createdAt.localeCompare(b.createdAt)),
+    };
+  });
 }
 
 function validateCreateInput(input: CreateRepairInput | Repair) {
@@ -430,6 +588,21 @@ function validateCreateInput(input: CreateRepairInput | Repair) {
   if (!input.receivedFromCustomerBy?.trim()) throw new Error("Received from customer by is required.");
   const sellingPrice = Number(input.sellingPrice);
   if (!Number.isFinite(sellingPrice)) throw new Error("Selling price is required.");
+}
+
+function clearRepairPhotoReference(repair: Repair, photo: RepairPhoto) {
+  if (repair.damagePhotoUrl === photo.url || repair.damagePhotoDriveId === photo.driveFileId) {
+    repair.damagePhotoDriveId = undefined;
+    repair.damagePhotoUrl = undefined;
+    repair.damagePhotoPreviewUrl = undefined;
+    repair.damagePhotoFileName = undefined;
+  }
+  if (repair.sendingPhotoUrl === photo.url || repair.sendingPhotoDriveId === photo.driveFileId) {
+    repair.sendingPhotoDriveId = undefined;
+    repair.sendingPhotoUrl = undefined;
+    repair.sendingPhotoPreviewUrl = undefined;
+    repair.sendingPhotoFileName = undefined;
+  }
 }
 
 async function findRepair(id: string) {
@@ -478,15 +651,13 @@ function buildAuditEntry(
   };
 }
 
-async function nextRepairNumber(partyName: string, productName = "") {
-  const prefix = `${prefixPart(partyName)}${prefixPart(productName)}`;
-  const data = await dataCollection<DataDoc>();
-  for (let i = 0; i < 100; i += 1) {
-    const suffix = String(Math.floor(Math.random() * 100)).padStart(2, "0");
-    const candidate = `${prefix}${suffix}`;
-    if (!(await data.findOne({ kind: "repair", repairNumber: candidate }))) return candidate;
-  }
-  throw new Error("Could not generate a unique repair ID. Try again.");
+function repairNumberPrefix(partyName: string, productName = "") {
+  return `${prefixPart(partyName)}${prefixPart(productName)}`;
+}
+
+function randomRepairNumber(prefix: string) {
+  const suffix = String(Math.floor(Math.random() * 100)).padStart(2, "0");
+  return `${prefix}${suffix}`;
 }
 
 function prefixPart(value: string) {
@@ -506,6 +677,10 @@ function stripKind<T>(doc: Record<string, unknown>): T {
   void _id;
   void kind;
   return rest as T;
+}
+
+function toPublicUser(doc: Record<string, unknown>): User {
+  return { id: doc.id as string, name: doc.name as string, role: doc.role as User["role"] };
 }
 
 function stripId<T extends { _id?: unknown }>(doc: T): Omit<T, "_id"> {

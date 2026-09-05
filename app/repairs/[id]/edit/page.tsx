@@ -136,6 +136,28 @@ export default function EditRepairPage() {
     });
   }
 
+  function deletePhoto(photoId: string) {
+    setError("");
+    setMessage("");
+    const password = window.prompt("Enter photo delete password");
+    if (password === null) return;
+
+    startTransition(async () => {
+      const response = await fetch(`/api/repairs/${id}/photos/${photoId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        setError(data.error ?? "Photo delete failed.");
+        return;
+      }
+      setPhotos(Array.isArray(data.repair?.photos) ? data.repair.photos : []);
+      setMessage("Photo deleted successfully.");
+    });
+  }
+
   if (!loaded) {
     return (
       <main className="shell">
@@ -236,6 +258,11 @@ export default function EditRepairPage() {
                 <a href={photo.url} target="_blank" rel="noreferrer">
                   Open original link
                 </a>
+              </div>
+              <div className="actions" style={{ marginTop: 8 }}>
+                <button className="button danger" type="button" disabled={isPending} onClick={() => deletePhoto(photo.id)}>
+                  {isPending ? "Deleting..." : "Delete Photo"}
+                </button>
               </div>
             </div>
           ))}
