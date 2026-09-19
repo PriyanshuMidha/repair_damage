@@ -1,0 +1,49 @@
+name: Keep Render + MongoDB alive
+
+on:
+  schedule:
+    # runs daily; job itself skips unless 26+ days passed since last ping
+    - cron: "0 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check if 26 days elapsed
+        id: gate
+        run: |
+          STATE_FILE=".github/keepalive-last-run"
+          NOW=$(date +%s)
+          if [ -f "$STATE_FILE" ]; then
+            LAST=$(cat "$STATE_FILE")
+          else
+            LAST=0
+          fi
+          DIFF_DAYS=$(( (NOW - LAST) / 86400 ))
+          echo "days_since_last_run=$DIFF_DAYS"
+          if [ "$DIFF_DAYS" -ge 26 ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ping app health endpoint
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          curl -fsS "${{ secrets.APP_URL }}/api/health"
+
+      - name: Record run timestamp
+        if: steps.gate.outputs.run == 'true'
+        run: |
+          date +%s > .github/keepalive-last-run
+          git config user.name "keepalive-bot"
+          git config user.email "actions@github.com"
+          git add .github/keepalive-last-run
+          git commit -m "chore: record keepalive ping timestamp" || exit 0
+          git push
